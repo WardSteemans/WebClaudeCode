@@ -83,8 +83,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
 function ApiKeysPage() {
   const {
-    anthropicApiKey, deepseekApiKey, deepseekBaseUrl,
-    setAnthropicApiKey, setDeepseekApiKey, setDeepseekBaseUrl,
+    anthropicApiKey, deepseekApiKey, deepseekBaseUrl, apiRouterInsecureTls,
+    setAnthropicApiKey, setDeepseekApiKey, setDeepseekBaseUrl, setApiRouterInsecureTls,
   } = useSettingsStore();
 
   const [showAnthropicKey, setShowAnthropicKey] = useState(false);
@@ -142,6 +142,29 @@ function ApiKeysPage() {
             spellCheck={false}
             className="w-full px-3 py-2 text-[13px] bg-[var(--color-input-bg)] border border-[var(--color-border)] rounded-lg text-[var(--color-text)] focus:outline-none focus:border-accent-500 transition-colors font-mono placeholder:text-[var(--color-text-muted)]/40"
           />
+        </div>
+
+        {/* TLS bypass for corporate firewalls */}
+        <div className="mt-4 pt-3 border-t border-[var(--color-border)]/40">
+          <div className="flex items-center justify-between">
+            <div className="flex-1 min-w-0 mr-3">
+              <span className="text-[11px] font-medium text-[var(--color-text)]">TLS Verify Uitzetten</span>
+              <p className="text-[10px] text-[var(--color-text-muted)]">Alleen nodig als je corporate firewall HTTPS onderschept met een eigen certificaat</p>
+            </div>
+            <button
+              onClick={() => setApiRouterInsecureTls(!apiRouterInsecureTls)}
+              className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${
+                apiRouterInsecureTls ? 'bg-amber-500' : 'bg-[var(--color-border)]'
+              }`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                apiRouterInsecureTls ? 'translate-x-4' : ''
+              }`} />
+            </button>
+          </div>
+          {apiRouterInsecureTls && (
+            <p className="text-[10px] text-amber-400 mt-1">⚠ TLS verificatie staat uit. Herstart de backend.</p>
+          )}
         </div>
       </div>
     </div>

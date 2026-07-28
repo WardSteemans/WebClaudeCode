@@ -75,6 +75,7 @@ interface SettingsState {
   deepseekApiKey: string;
   deepseekBaseUrl: string;
   apiProxyUrl: string;
+  apiRouterInsecureTls: boolean;
   showActivity: boolean;
   autoTitleEnabled: boolean;
   autoTitleTiers: AutoTitleTier[];
@@ -98,6 +99,7 @@ interface SettingsState {
   setDeepseekApiKey: (key: string) => void;
   setDeepseekBaseUrl: (url: string) => void;
   setApiProxyUrl: (url: string) => void;
+  setApiRouterInsecureTls: (enabled: boolean) => void;
   setShowActivity: (show: boolean) => void;
   setAutoTitleEnabled: (enabled: boolean) => void;
   setAutoTitleTiers: (tiers: AutoTitleTier[]) => void;
@@ -127,6 +129,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   deepseekApiKey: '',
   deepseekBaseUrl: 'https://api.deepseek.com/anthropic',
   apiProxyUrl: '',
+  apiRouterInsecureTls: false,
   showActivity: true,
   autoTitleEnabled: true,
   autoTitleTiers: [...DEFAULT_AUTO_TITLE_TIERS],
@@ -233,6 +236,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     set({ apiProxyUrl: url });
     debouncedSave(toSettings(get()));
   },
+  setApiRouterInsecureTls: (enabled) => {
+    set({ apiRouterInsecureTls: enabled });
+    debouncedSave(toSettings(get()));
+  },
   setShowActivity: (show) => {
     set({ showActivity: show });
     debouncedSave(toSettings(get()));
@@ -255,6 +262,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       deepseekApiKey: data.deepseekApiKey || '',
       deepseekBaseUrl: data.deepseekBaseUrl || 'https://api.deepseek.com/anthropic',
       apiProxyUrl: data.apiProxyUrl || '',
+      apiRouterInsecureTls: data.apiRouterInsecureTls === 'true',
       showActivity: data.showActivity !== 'false',
       autoTitleEnabled: data.autoTitleEnabled !== 'false',
       autoTitleTiers: (() => {
@@ -369,6 +377,7 @@ function toSettings(s: SettingsState): Record<string, string> {
     deepseekApiKey: s.deepseekApiKey,
     deepseekBaseUrl: s.deepseekBaseUrl,
     apiProxyUrl: s.apiProxyUrl,
+    apiRouterInsecureTls: String(s.apiRouterInsecureTls),
     showActivity: String(s.showActivity),
     autoTitleEnabled: String(s.autoTitleEnabled),
     autoTitleTiers: JSON.stringify(s.autoTitleTiers),
