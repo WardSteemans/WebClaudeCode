@@ -290,8 +290,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       // Route through our built-in proxy for automatic image→vision processing.
       // Default assumes backend on localhost:3001. Override via apiProxyUrl setting.
       const proxyUrl = s.apiProxyUrl || 'http://localhost:3001/api/proxy';
+      // Temporarily bypass proxy for debugging — remove this line to re-enable
+      const USE_PROXY = true;
       return {
-        ANTHROPIC_BASE_URL: proxyUrl,
+        ANTHROPIC_BASE_URL: USE_PROXY ? proxyUrl : (s.deepseekBaseUrl || 'https://api.deepseek.com/anthropic'),
         ANTHROPIC_API_KEY: s.deepseekApiKey,
         ANTHROPIC_MODEL: modelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,

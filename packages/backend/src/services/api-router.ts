@@ -509,6 +509,12 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
 
   // No images and no rule-triggered vision → forward directly
   if (!shouldUseVision) {
+    log.info('forwarding direct (no images)', {
+      model: extractModel(parsed),
+      bodySize: body.length,
+      targetUrl: cfg.deepseekBaseUrl,
+      bodyPreview: body.slice(0, 200),
+    });
     forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, req, res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'direct', provider, model: effectiveModel, statusCode,
