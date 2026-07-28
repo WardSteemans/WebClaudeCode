@@ -11,6 +11,14 @@ interface PromptInputProps {
   onSubmit: () => void;
   disabled?: boolean;
   placeholder?: string;
+  onImagesChange?: (images: ImageAttachment[]) => void;
+}
+
+export interface ImageAttachment {
+  id: string;
+  base64: string;
+  mediaType: string;
+  fileName: string;
 }
 
 interface AutocompleteState {
@@ -107,6 +115,7 @@ export function PromptInput({
   onSubmit,
   disabled,
   placeholder,
+  onImagesChange,
 }: PromptInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -117,6 +126,7 @@ export function PromptInput({
   const [fileSuggestions, setFileSuggestions] = useState<FileSuggestion[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [images, setImages] = useState<ImageAttachment[]>([]);
 
   // ── Dynamic slash commands from Claude Code (merged with static list) ──
   const dynamicSlashCommands = useEventBus((s) => s.slashCommands);
@@ -337,7 +347,50 @@ export function PromptInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [autocomplete, dismissAutocomplete]);
 
-  // ── Render ──
+  // ── Paste handler for images ──
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const newImages: ImageAttachment[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const blob = item.getAsFile();
+        if (!blob) continue;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(',')[1];
+          const img: ImageAttachment = {
+            id: crypto.randomUUID(),
+            base64,
+            mediaType: item.type,
+            fileName: `pasted-image.${item.type.split('/')[1]}`,
+          };
+          newImages.push(img);
+          if (newImages.length === 1) {
+            const updated = [...images, ...newImages];
+            setImages(updated);
+            onImagesChange?.(updated);
+          }
+        };
+        reader.readAsDataURL(blob);
+        e.preventDefault();
+      }
+    }
+  }, [images, onImagesChange]);
+
+  // ── Remove image ──
+  const removeImage = useCallback((id: string) => {
+    const updated = images.filter(img => img.id !== id);
+    setImages(updated);
+    onImagesChange?.(updated);
+  }, [images, onImagesChange]);
+
+  // ── Reset images (called externally after submit) ──
+  const resetImages = useCallback(() => {
+    setImages([]);
+    onImagesChange?.([]);
+  }, [onImagesChange]);
 
   const showDropdown = autocomplete && suggestions.length > 0;
 
@@ -361,6 +414,21 @@ export function PromptInput({
       )}
 
       <div className="relative flex gap-2">
+        {/* Image previews */}
+        {images.length > 0 && (
+          <div className="absolute bottom-full left-0 right-0 mb-2 flex gap-2 flex-wrap">
+            {images.map(img => (
+              <div key={img.id} className="relative group w-16 h-16 rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-input-bg)]">
+                <img src={`data:${img.mediaType};base64,${img.base64}`} alt="Attached" className="w-full h-full object-cover" />
+                <button
+                  onClick={() => removeImage(img.id)}
+                  className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Input container */}
         <div className="relative flex-1 bg-[var(--color-input-bg)] border border-[var(--color-border)] rounded-lg">
           {/* Syntax highlight overlay */}
@@ -399,6 +467,7 @@ export function PromptInput({
             onChange={handleChange}
             onClick={handleCursorChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             onScroll={syncScroll}
             placeholder={placeholder}
             disabled={disabled}

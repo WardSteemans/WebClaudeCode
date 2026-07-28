@@ -225,7 +225,7 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
 
             sessions.set(session.sessionId, session);
             activeSession = session;
-            if (msg.prompt) session.sendPrompt(msg.prompt);
+            if (msg.prompt) session.sendPrompt(msg.prompt as string | unknown[]);
             break;
           }
 

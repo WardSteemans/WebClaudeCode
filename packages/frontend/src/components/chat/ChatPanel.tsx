@@ -43,6 +43,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
     handleSegmentClick,
     isSegmentCollapsed,
     handleToggleThinkingExpand,
+    imagesRef,
   } = useChatStream({
     tabId, chatId, workDir, permissionMode, selectedModel, selectedEffort,
     chatSessionId: chat?.sessionId ?? null,
@@ -154,6 +155,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
           onChange={setInput}
           onSubmit={handleSend}
           disabled={isStreaming}
+          onImagesChange={(imgs) => { imagesRef.current = imgs; }}
           placeholder={isStreaming ? 'Waiting for response…' : 'Send a prompt…'}
         />
       </div>

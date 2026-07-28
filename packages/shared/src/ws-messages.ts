@@ -9,7 +9,7 @@ export interface PromptMessage {
   workDir?: string;
   sessionId?: string;
   permissionMode?: PermissionMode;
-  prompt?: string;
+  prompt?: string | unknown[];
   env?: Record<string, string>;
   resumeSessionId?: string;
   provider?: string;

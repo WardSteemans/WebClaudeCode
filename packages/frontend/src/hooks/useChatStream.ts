@@ -75,6 +75,7 @@ export function useChatStream({
   const clickTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const thinkingBlocksRef = useRef<Map<string, ThinkingBlock>>(new Map());
   const lastTitleGenRef = useRef(0);
+  const imagesRef = useRef<Array<{ base64: string; mediaType: string }>>([]);
 
   // Keep ref in sync for callbacks that read thinkingBlocks without re-subscribing
   useEffect(() => { thinkingBlocksRef.current = thinkingBlocks; }, [thinkingBlocks]);
@@ -561,7 +562,23 @@ export function useChatStream({
       activateChat(tabId, chatId);
     }
     useEventBus.getState().clearTasks();
-    setMessages((prev) => [...prev, { role: 'user', content: prompt, id: crypto.randomUUID(), timestamp: new Date().toISOString() }]);
+    // Build prompt with images if any
+    const images = imagesRef.current;
+    const promptContent: string | unknown[] = images.length > 0
+      ? [
+          { type: 'text', text: prompt },
+          ...images.map(img => ({
+            type: 'image',
+            source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+          })),
+        ]
+      : prompt;
+
+    // Show user message with image indicator
+    const displayText = images.length > 0
+      ? prompt + (images.length > 0 ? `\n\n[${images.length} attached image${images.length > 1 ? 's' : ''}]` : '')
+      : prompt;
+    setMessages((prev) => [...prev, { role: 'user', content: displayText, id: crypto.randomUUID(), timestamp: new Date().toISOString() }]);
     updateChatLastMessage(tabId, chatId);
 
     const env: Record<string, string> = {};
@@ -575,12 +592,13 @@ export function useChatStream({
 
     resetStreamTimer();
     send({
-      type: 'prompt', workDir, prompt, permissionMode,
+      type: 'prompt', workDir, prompt: promptContent, permissionMode,
       env: Object.keys(env).length > 0 ? env : undefined,
       resumeSessionId: chatSessionId,
       _chatId: chatId,
     });
     currentThinkingIdRef.current = null;
+    imagesRef.current = [];
   }, [input, isStreaming, chatId, tabId, workDir, permissionMode, selectedModel, selectedEffort, chatSessionId, resetStreamTimer, send, setTabStatus, activateChat, updateChatLastMessage]);
 
   // ── Thinking block expand handler (placed here to access setThinkingExpanded / setCollapsedSegments) ──
@@ -620,6 +638,7 @@ export function useChatStream({
     // Refs
     messagesEndRef,
     thinkingBlocksRef,
+    imagesRef,
     // Actions
     handleSend,
     handleSegmentClick,

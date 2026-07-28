@@ -38,7 +38,7 @@ export interface ActiveSession {
   sessionId: string;
   workDir: string;
   process: ChildProcess;
-  sendPrompt: (prompt: string) => void;
+  sendPrompt: (prompt: string | unknown[]) => void;
   abort: () => void;
 }
 
@@ -119,10 +119,11 @@ export function startSession(opts: SessionOptions): ActiveSession {
     opts.onExit(code);
   });
 
-  const sendPrompt = (prompt: string) => {
+  const sendPrompt = (prompt: string | unknown[]) => {
+    const content = Array.isArray(prompt) ? prompt : prompt;
     const message = JSON.stringify({
       type: 'user',
-      message: { role: 'user', content: prompt },
+      message: { role: 'user', content },
     }) + '\n';
     log.info(`sending prompt`, { sid, bytes: message.length });
     proc.stdin!.write(message);
