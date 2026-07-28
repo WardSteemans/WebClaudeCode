@@ -3,6 +3,13 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('git');
 
+// ── Git porcelain status code mapping ──
+const STATUS_MAP: Record<string, string> = { M: 'm', A: 'a', D: 'd', R: 'r', C: 'c' };
+const UNSTAGED_STATUS_MAP: Record<string, string> = { M: 'm', D: 'd' };
+
+// ── Delimiter for --format parsing (ASCII Unit Separator — won't appear in commit data) ──
+const LOG_DELIMITER = '\x1F';
+
 function git(cwd: string, args: string[]): string {
   const command = `git ${args.join(' ')}`;
   const mark = log.mark('git', { command: command.slice(0, 200), cwd });
@@ -43,7 +50,6 @@ export function getStatus(cwd: string): GitStatus {
   if (gitDir && gitCommonDir && gitDir !== gitCommonDir && !superProject) {
     isWorktree = true;
     worktreePath = cwd;
-    // Main worktree is git-common-dir's parent's parent
     const parts = gitCommonDir.replace(/\\/g, '/').split('/');
     const gitIndex = parts.lastIndexOf('.git');
     if (gitIndex > 0) mainWorktree = parts.slice(0, gitIndex).join('/');
@@ -77,18 +83,17 @@ export function getStatus(cwd: string): GitStatus {
     const y = line[1];
     const file = line.slice(3).trim();
     if (x !== ' ' && x !== '?') {
-      const s = ({ M: 'm', A: 'a', D: 'd', R: 'r', C: 'c' } as Record<string, string>)[x] || x.toLowerCase();
+      const s = STATUS_MAP[x] || x.toLowerCase();
       const nums = stagedStats.get(file) || { added: 0, deleted: 0 };
       changes.push({ file, status: s, staged: true, ...nums });
     }
     if (y !== ' ' && y !== '?') {
-      const s = ({ M: 'm', D: 'd' } as Record<string, string>)[y] || y.toLowerCase();
+      const s = UNSTAGED_STATUS_MAP[y] || y.toLowerCase();
       const nums = unstagedStats.get(file) || { added: 0, deleted: 0 };
       changes.push({ file, status: s, staged: false, ...nums });
     }
   }
 
-  // Deduplicate: if a file has both staged and unstaged, keep both entries
   const clean = changes.length === 0;
 
   return { branch, ahead, behind, changes, clean, isWorktree, worktreePath, mainWorktree };
@@ -102,13 +107,11 @@ export function getDiff(cwd: string, file?: string, staged = false): string {
 }
 
 export function getLog(cwd: string, limit = 30): { hash: string; message: string; author: string; date: string }[] {
-  const out = git(cwd, [`log --oneline -${limit} --format="%h|%s|%an|%ar"`]);
+  // Use ASCII Unit Separator as delimiter — won't appear in commit messages, author names, or dates
+  const out = git(cwd, [`log --oneline -${limit} --format="%h${LOG_DELIMITER}%s${LOG_DELIMITER}%an${LOG_DELIMITER}%ar"`]);
   return out.split('\n').filter(Boolean).map((line) => {
-    const [hash, ...rest] = line.split('|');
-    const message = rest.slice(0, -2).join('|');
-    const author = rest[rest.length - 2];
-    const date = rest[rest.length - 1];
-    return { hash, message, author, date };
+    const [hash, message, author, date] = line.split(LOG_DELIMITER);
+    return { hash, message: message ?? '', author: author ?? '', date: date ?? '' };
   });
 }
 
@@ -151,11 +154,9 @@ export function checkout(cwd: string, branch: string): string {
 export function worktreeAdd(cwd: string, branch: string, targetPath?: string): { ok: boolean; output: string; path: string } {
   const fullBranch = branch.includes('remotes/origin/') ? branch : `origin/${branch}`;
   
-  // Derive path name from branch
   const branchName = branch.replace(/^remotes\/origin\//, '').replace(/^origin\//, '').replace(/\//g, '-');
   const worktreePath = targetPath || `${cwd}-review-${branchName}`;
   
-  // First fetch to ensure the remote branch is available
   git(cwd, ['fetch origin', branchName]);
   
   const output = git(cwd, ['worktree add', `"${worktreePath}"`, fullBranch]);

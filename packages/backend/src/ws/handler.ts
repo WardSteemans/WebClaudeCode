@@ -3,18 +3,25 @@ import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { createServer } from 'http';
 import { startSession, ActiveSession } from '../services/session-manager.js';
-import { parseClaudeEvent } from '../services/eventParser.js';
+import { parseClaudeEvent } from '../services/eventParser/index.js';
 import { createLogger } from '../logger.js';
+import type { SessionUsageEvent } from '@cc-gui/shared';
+import type {
+  WsClientMessage, PermissionMode, PromptMessage,
+  WsOutgoingEvent, WsOutgoingSessionReady, WsOutgoingSessionExit,
+  WsOutgoingAborted, WsOutgoingSubagentReady, WsOutgoingSubagentExit,
+  WsOutgoingSubagentAborted, WsOutgoingError,
+} from './messages.js';
 
 const log = createLogger('ws');
 
 const sessions = new Map<string, ActiveSession>();
 const subSessions = new Map<string, ActiveSession>();
 
-// Per-connection heartbeat: send ping every 30s to keep the connection alive
+// Per-connection heartbeat
 const HEARTBEAT_INTERVAL = 30_000;
 
-// ----- Context query (runs after session exits to get usage stats) -----
+// ── Context query (runs after session exits to get usage stats) ──
 
 function queryContext(workDir: string, sessionId: string, chatId: string, ws: WebSocket) {
   log.info('querying /context', { sessionId: sessionId.slice(0, 8) });
@@ -40,7 +47,6 @@ function queryContext(workDir: string, sessionId: string, chatId: string, ws: We
     console.error(`[context] query error:`, err.message);
   });
 
-  // Write /context prompt immediately (--print mode expects stdin right away)
   proc.stdin!.write(JSON.stringify({
     type: 'user',
     message: { role: 'user', content: '/context' },
@@ -51,15 +57,18 @@ function queryContext(workDir: string, sessionId: string, chatId: string, ws: We
     try {
       const lines = stdout.split('\n').filter(l => l.trim());
       for (const line of lines) {
-        let evt: any;
+        let evt: unknown;
         try { evt = JSON.parse(line); } catch { continue; }
-        
-        // Claude Code outputs context as a user or assistant message
-        if (evt.type === 'user' || evt.type === 'assistant') {
-          const content = Array.isArray(evt.message?.content)
-            ? evt.message.content.map((b: any) => b.text || '').join('')
-            : String(evt.message?.content || '');
-          
+
+        if (typeof evt !== 'object' || !evt) continue;
+        const e = evt as Record<string, unknown>;
+
+        if (e.type === 'user' || e.type === 'assistant') {
+          const msg = e.message as Record<string, unknown> | undefined;
+          const content = Array.isArray(msg?.content)
+            ? (msg.content as { text?: string }[]).map(b => b.text || '').join('')
+            : String(msg?.content || '');
+
           const usage = extractUsageFromContext(content, sessionId);
           if (usage && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'event', chatId, event: usage }));
@@ -73,16 +82,12 @@ function queryContext(workDir: string, sessionId: string, chatId: string, ws: We
   });
 }
 
-function extractUsageFromContext(content: string, sessionId: string): any | null {
-  // Try to find JSON-like context data in Claude's response
-  // Claude Code's /context output varies by version
-  
-  // Pattern 1: Look for token counts like "Total tokens: 12,345 / 200,000"
+function extractUsageFromContext(content: string, sessionId: string): SessionUsageEvent | null {
   const totalMatch = content.match(/[Tt]otal\s*tokens?:?\s*([\d,]+)\s*\/\s*([\d,]+)/);
   const inputMatch = content.match(/[Ii]nput\s*tokens?:?\s*([\d,]+)/);
   const outputMatch = content.match(/[Oo]utput\s*tokens?:?\s*([\d,]+)/);
   const cacheMatch = content.match(/[Cc]ache\s*(?:read)?:?\s*([\d,]+)/);
-  
+
   if (totalMatch || inputMatch || outputMatch) {
     const parse = (s: string) => parseInt(s.replace(/,/g, ''), 10) || 0;
     const inputTokens = inputMatch ? parse(inputMatch[1]) : (totalMatch ? parse(totalMatch[1]) : 0);
@@ -131,11 +136,13 @@ function extractUsageFromContext(content: string, sessionId: string): any | null
         limit: contextLimit,
         percentUsed: Math.round((inputTokens / contextLimit) * 1000) / 10,
       },
-    };
+    } satisfies SessionUsageEvent;
   }
-  
+
   return null;
 }
+
+// ── WebSocket setup ──
 
 export function setupWebSocket(server: ReturnType<typeof createServer>): { sessions: Map<string, ActiveSession>; subSessions: Map<string, ActiveSession> } {
   const wss = new WebSocketServer({ server, path: '/ws' });
@@ -145,7 +152,6 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let isAlive = true;
 
-    // Heartbeat: send ping, mark as dead if no pong comes back
     heartbeatTimer = setInterval(() => {
       if (!isAlive) {
         log.warn('heartbeat lost — terminating socket');
@@ -156,7 +162,6 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
       ws.ping();
     }, HEARTBEAT_INTERVAL);
 
-    // Mark alive on pong (browser responds automatically to ping)
     ws.on('pong', () => {
       isAlive = true;
     });
@@ -164,30 +169,29 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
     ws.on('message', (data) => {
       const raw = data.toString();
 
-      // Parse JSON (separate try so we don't misreport spawn errors)
-      let msg: { type: string; workDir?: string; sessionId?: string; permissionMode?: string; prompt?: string; env?: Record<string, string>; resumeSessionId?: string; provider?: string; model?: string };
+      let msg: WsClientMessage;
       try {
-        msg = JSON.parse(raw);
+        msg = JSON.parse(raw) as WsClientMessage;
       } catch {
         log.error('invalid JSON received', undefined, { length: raw.length });
-        ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' } satisfies WsOutgoingError));
         return;
       }
 
-      log.debug('ws message', { type: msg.type, promptPreview: msg.prompt?.slice(0, 80) });
+      log.debug('ws message', { type: msg.type, promptPreview: (msg as PromptMessage).prompt?.slice(0, 80) });
 
       try {
         switch (msg.type) {
+          // ── Start Claude session ──
           case 'prompt': {
-            // Kill any existing Claude process
             if (activeSession) {
               activeSession.abort();
               sessions.delete(activeSession.sessionId);
             }
 
             const workDir = msg.workDir || process.cwd();
-            const permissionMode: 'default' | 'acceptEdits' | 'auto' | 'plan' | 'dontAsk' | 'bypassPermissions' = (msg.permissionMode as any) || 'bypassPermissions';
-            const chatId = (msg as any)._chatId || 'default';
+            const permissionMode: PermissionMode = msg.permissionMode || 'bypassPermissions';
+            const chatId = msg._chatId || 'default';
             let realSessionId: string | null = null;
 
             const session = startSession({
@@ -198,27 +202,22 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
               onRawLine: (rawLine, sid) => {
                 if (ws.readyState !== WebSocket.OPEN) return;
                 for (const event of parseClaudeEvent(rawLine, sid)) {
-                  ws.send(JSON.stringify({ type: 'event', chatId, event }));
+                  ws.send(JSON.stringify({ type: 'event', chatId, event } satisfies WsOutgoingEvent));
                 }
               },
               onSessionReady: (realId) => {
                 realSessionId = realId;
                 if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'session_ready', sessionId: realId }));
+                  ws.send(JSON.stringify({ type: 'session_ready', sessionId: realId } satisfies WsOutgoingSessionReady));
                 }
               },
               onExit: (code) => {
                 const sid = realSessionId || session.sessionId;
                 if (ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify({
-                    type: 'session_exit',
-                    sessionId: sid,
-                    exitCode: code,
-                  }));
+                    type: 'session_exit', sessionId: sid, exitCode: code,
+                  } satisfies WsOutgoingSessionExit));
                 }
-                // Query context in background to get usage stats (fallback if parser missed it)
-                // Disabled: parser now reliably extracts usage from result events
-                // if (realSessionId) queryContext(workDir, realSessionId, chatId, ws);
                 sessions.delete(session.sessionId);
                 if (activeSession?.sessionId === session.sessionId) activeSession = null;
               },
@@ -230,22 +229,24 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
             break;
           }
 
+          // ── Abort active session ──
           case 'abort': {
             if (activeSession) {
               activeSession.abort();
               sessions.delete(activeSession.sessionId);
               activeSession = null;
-              ws.send(JSON.stringify({ type: 'aborted' }));
+              ws.send(JSON.stringify({ type: 'aborted' } satisfies WsOutgoingAborted));
             }
             break;
           }
 
+          // ── Start subagent ──
           case 'subagent:start': {
-            const chatId = (msg as any).chatId || 'default';
-            const subagentId = (msg as any).subagentId || randomUUID();
-            const task = (msg as any).task || '';
-            const workDir = (msg as any).workDir || process.cwd();
-            const env = (msg as any).env || {};
+            const chatId = msg.chatId || 'default';
+            const subagentId = msg.subagentId || randomUUID();
+            const task = msg.task || '';
+            const workDir = msg.workDir || process.cwd();
+            const env = msg.env || {};
 
             log.info('subagent:start', { subagentId: subagentId.slice(0, 8), taskPreview: task.slice(0, 100), chatId });
 
@@ -256,17 +257,17 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
               onRawLine: (rawLine, sid) => {
                 if (ws.readyState !== WebSocket.OPEN) return;
                 for (const event of parseClaudeEvent(rawLine, sid)) {
-                  ws.send(JSON.stringify({ type: 'event', chatId, subagentId, event }));
+                  ws.send(JSON.stringify({ type: 'event', chatId, subagentId, event } satisfies WsOutgoingEvent));
                 }
               },
               onSessionReady: (realId) => {
                 if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'subagent_ready', chatId, subagentId, sessionId: realId }));
+                  ws.send(JSON.stringify({ type: 'subagent_ready', chatId, subagentId, sessionId: realId } satisfies WsOutgoingSubagentReady));
                 }
               },
               onExit: (code) => {
                 if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'subagent_exit', chatId, subagentId, exitCode: code }));
+                  ws.send(JSON.stringify({ type: 'subagent_exit', chatId, subagentId, exitCode: code } satisfies WsOutgoingSubagentExit));
                 }
                 subSessions.delete(subagentId);
               },
@@ -277,31 +278,28 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
             break;
           }
 
+          // ── Abort subagent ──
           case 'subagent:abort': {
-            const subagentId = (msg as any).subagentId;
+            const subagentId = msg.subagentId;
             if (subagentId) {
               const sub = subSessions.get(subagentId);
               if (sub) {
                 sub.abort();
                 subSessions.delete(subagentId);
-                ws.send(JSON.stringify({ type: 'subagent_aborted', subagentId }));
+                ws.send(JSON.stringify({ type: 'subagent_aborted', subagentId } satisfies WsOutgoingSubagentAborted));
               }
             }
             break;
           }
-
-          default:
-            ws.send(JSON.stringify({ type: 'error', message: `Unknown message type: ${msg.type}` }));
         }
       } catch (err) {
         log.error('ws handler error', err instanceof Error ? err : undefined);
-        ws.send(JSON.stringify({ type: 'error', message: 'Server error: ' + (err instanceof Error ? err.message : String(err)) }));
+        ws.send(JSON.stringify({ type: 'error', message: 'Server error: ' + (err instanceof Error ? err.message : String(err)) } satisfies WsOutgoingError));
       }
     });
 
     ws.on('error', (err) => {
       log.error('ws socket error', err instanceof Error ? err : undefined);
-      // Cleanup happens in close handler (error always triggers close)
     });
 
     ws.on('close', () => {
@@ -319,7 +317,6 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
         sub.abort();
       }
       subSessions.clear();
-      // Only log if there was actual work being done
       if (hadSession || subCount > 0) {
         log.info(`client disconnected`, { hadSession, subCount });
       }
