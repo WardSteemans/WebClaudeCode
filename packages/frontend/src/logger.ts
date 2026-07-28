@@ -20,8 +20,10 @@ function sendLog(payload: LogPayload): void {
     body,
     // keepalive ensures the request completes even if the page is navigating away
     keepalive: true,
-  }).catch(() => {
+  }).catch((err) => {
     // Silently ignore — we don't want logging failures to cause noise
+    // but log to console in dev for debugging
+    if (import.meta.env.DEV) console.warn('Logger failed to send', err);
   });
 }
 

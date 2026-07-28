@@ -8,7 +8,10 @@ import './index.css';
 // Start in dark mode by default
 document.documentElement.classList.add('dark');
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const rootEl = document.getElementById('root');
+if (!rootEl) throw new Error('Root element #root not found — cannot mount React app');
+
+ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <ThemeProvider>
       <BrowserRouter>

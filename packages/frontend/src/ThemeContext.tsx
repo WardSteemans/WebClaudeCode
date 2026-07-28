@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { safeGetItem, safeSetItem } from './lib/storage';
 
 type Theme = 'dark' | 'light';
 
@@ -11,7 +12,7 @@ const ThemeContext = createContext<ThemeContextValue>({ theme: 'dark', toggle: (
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem('cc-gui-theme');
+    const saved = safeGetItem('cc-gui-theme');
     return (saved === 'light' || saved === 'dark') ? saved : 'dark';
   });
 
@@ -22,7 +23,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     } else {
       root.classList.add('dark');
     }
-    localStorage.setItem('cc-gui-theme', theme);
+    safeSetItem('cc-gui-theme', theme);
   }, [theme]);
 
   const toggle = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));

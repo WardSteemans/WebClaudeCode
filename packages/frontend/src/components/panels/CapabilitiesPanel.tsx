@@ -1,4 +1,4 @@
-import { useEventBus } from '../store/eventBus';
+import { useEventBus } from '../../store/eventBus';
 import { Zap, Bot, Server, Box, Wrench } from 'lucide-react';
 
 export function CapabilitiesPanel() {

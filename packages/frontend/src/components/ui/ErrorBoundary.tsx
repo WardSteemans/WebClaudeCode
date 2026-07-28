@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from 'react';
-import { createFrontendLogger } from '../logger';
+import { createFrontendLogger } from '../../logger';
 
 const log = createFrontendLogger('ErrorBoundary');
 

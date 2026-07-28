@@ -1,5 +1,5 @@
 import { RefreshCw, RotateCcw } from 'lucide-react';
-import { useSettingsStore } from '../store/settingsStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { CLAUDE_SETTING_DEFINITIONS, CLAUDE_SETTING_DEFAULTS, type SettingDefinition } from '@cc-gui/shared';
 
 export function ClaudeSettingsPage() {
@@ -17,14 +17,14 @@ export function ClaudeSettingsPage() {
   ];
 
   function isDefault(key: string): boolean {
-    const val = claudeSettings[key];
+    const val = (claudeSettings as Record<string, unknown>)[key];
     if (val === undefined || val === null) return true;
     // Check nested keys
     const keys = key.split('.');
-    let current: any = claudeSettings;
+    let current: unknown = claudeSettings as Record<string, unknown>;
     for (const k of keys) {
-      if (current == null || !(k in current)) return true;
-      current = current[k];
+      if (current == null || typeof current !== 'object' || !(k in current)) return true;
+      current = (current as Record<string, unknown>)[k];
     }
     return false;
   }

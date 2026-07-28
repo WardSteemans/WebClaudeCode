@@ -1,7 +1,7 @@
 import { ChatList } from './ChatList';
 import { ChatPanel } from './ChatPanel';
-import { ErrorBoundary } from './ErrorBoundary';
-import { useTabStore } from '../store';
+import { ErrorBoundary } from '../ui/ErrorBoundary';
+import { useTabStore } from '../../store';
 
 interface TabViewProps {
   tabId: string;

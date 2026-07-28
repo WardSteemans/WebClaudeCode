@@ -1,4 +1,4 @@
-import { useEventBus, ActivityEntry } from '../store/eventBus';
+import { useEventBus, ActivityEntry } from '../../store/eventBus';
 import { Wrench, FileText, Terminal, Shield, Check, X, Loader, ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppEvent, ToolStartedEvent, ToolCompletedEvent, FileEvent, CommandEvent, SessionEvent, PermissionRequestedEvent, NotificationEvent, SessionStatusEvent, TaskStartedEvent, TaskCompletedEvent } from '@cc-gui/shared';
+import type { AppEvent, ToolStartedEvent, ToolCompletedEvent, FileEvent, CommandEvent, SessionEvent, PermissionRequestedEvent, NotificationEvent, SessionStatusEvent, SessionInitEvent, TaskStartedEvent, TaskCompletedEvent } from '@cc-gui/shared';
 import { useSessionMetrics } from './sessionMetrics';
 
 // ==================== Activity Timeline Entry ====================
@@ -178,7 +178,7 @@ export const useEventBus = create<EventBusState>((set, get) => ({
 
     // Store dynamic slash commands + skills from Claude Code init
     if (event.type === 'session.init') {
-      const init = event as any;
+      const init = event as SessionInitEvent;
       if (Array.isArray(init.slashCommands)) {
         set({ slashCommands: init.slashCommands });
       }

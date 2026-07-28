@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X, Plus, Eye, EyeOff, Key, Activity, Globe, ChevronRight, Sliders, Cloud, Link2 } from 'lucide-react';
-import { useSettingsStore } from '../store/settingsStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { ClaudeSettingsPage } from './ClaudeSettingsPage';
 
 interface SettingsModalProps {

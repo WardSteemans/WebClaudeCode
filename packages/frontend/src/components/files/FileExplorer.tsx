@@ -49,7 +49,7 @@ export function FileExplorer({ workDir, onSelectFile, selectedFile }: FileExplor
               setChildren((prev) => new Map(prev).set(dirPath, data.entries || []));
             }
           })
-          .catch(() => {});
+          .catch((err) => { console.warn('Failed to load file tree', err); });
       }
       next.add(dirPath);
       return next;

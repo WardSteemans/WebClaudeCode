@@ -1,35 +1,36 @@
 import { create } from 'zustand';
 import { ClaudeCodeSettings, CLAUDE_SETTING_DEFAULTS } from '@cc-gui/shared';
+import { safeGetItem } from '../lib/storage';
 
 // ==================== Deep get/set helpers ====================
 
-function deepGet(obj: Record<string, any>, path: string): any {
+function deepGet(obj: Record<string, unknown>, path: string): unknown {
   const keys = path.split('.');
-  let current: any = obj;
+  let current: unknown = obj;
   for (const key of keys) {
     if (current == null || typeof current !== 'object') return undefined;
-    current = current[key];
+    current = (current as Record<string, unknown>)[key];
   }
   return current;
 }
 
-function deepSet(obj: Record<string, any>, path: string, value: any): Record<string, any> {
+function deepSet(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
   const keys = path.split('.');
   const result = { ...obj };
-  let current = result;
+  let current: Record<string, unknown> = result;
   for (let i = 0; i < keys.length - 1; i++) {
     if (!(keys[i] in current) || typeof current[keys[i]] !== 'object') {
       current[keys[i]] = {};
     } else {
-      current[keys[i]] = { ...current[keys[i]] };
+      current[keys[i]] = { ...(current[keys[i]] as Record<string, unknown>) };
     }
-    current = current[keys[i]];
+    current = current[keys[i]] as Record<string, unknown>;
   }
   current[keys[keys.length - 1]] = value;
   return result;
 }
 
-function deepDelete(obj: Record<string, any>, path: string): Record<string, any> {
+function deepDelete(obj: Record<string, unknown>, path: string): Record<string, unknown> {
   const keys = path.split('.');
   if (keys.length === 1) {
     const { [keys[0]]: _, ...rest } = obj;
@@ -37,11 +38,11 @@ function deepDelete(obj: Record<string, any>, path: string): Record<string, any>
   }
   const parent = deepGet(obj, keys.slice(0, -1).join('.'));
   if (!parent || typeof parent !== 'object') return obj;
-  const result = deepSet(obj, keys.slice(0, -1).join('.'), { ...parent });
+  const result = deepSet(obj, keys.slice(0, -1).join('.'), { ...(parent as Record<string, unknown>) });
   const lastKey = keys[keys.length - 1];
   const parentClone = deepGet(result, keys.slice(0, -1).join('.'));
   if (parentClone && typeof parentClone === 'object') {
-    delete parentClone[lastKey];
+    delete (parentClone as Record<string, unknown>)[lastKey];
   }
   return result;
 }
@@ -88,7 +89,7 @@ function debouncedSave(settings: Record<string, string>) {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
-    }).catch(() => {});
+    }).catch((err) => { console.warn('Failed to load settings', err); });
   }, 300);
 }
 
@@ -99,17 +100,17 @@ export async function loadSettingsFromDb(): Promise<Record<string, string>> {
   } catch {}
   // Fallback: migrate from localStorage (one-time)
   const legacy: Record<string, string> = {};
-  const anthropic = localStorage.getItem('cc-gui-settings-anthropicKey');
-  const deepseek = localStorage.getItem('cc-gui-settings-deepseekKey');
-  const baseUrl = localStorage.getItem('cc-gui-settings-deepseekBaseUrl');
-  const activity = localStorage.getItem('cc-gui-settings-showActivity');
+  const anthropic = safeGetItem('cc-gui-settings-anthropicKey');
+  const deepseek = safeGetItem('cc-gui-settings-deepseekKey');
+  const baseUrl = safeGetItem('cc-gui-settings-deepseekBaseUrl');
+  const activity = safeGetItem('cc-gui-settings-showActivity');
   if (anthropic) legacy.anthropicApiKey = anthropic;
   if (deepseek) legacy.deepseekApiKey = deepseek;
   if (baseUrl) legacy.deepseekBaseUrl = baseUrl;
   if (activity) legacy.showActivity = activity;
   // Also try legacy Zustand persist key
   try {
-    const raw = localStorage.getItem('cc-gui-settings');
+    const raw = safeGetItem('cc-gui-settings');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed.state) Object.assign(legacy, {
@@ -149,7 +150,7 @@ interface SettingsState {
   azureDevopsUserId: string;
 
   // Claude Code settings
-  claudeSettings: Record<string, any>;
+  claudeSettings: ClaudeCodeSettings;
   claudeSettingsLoaded: boolean;
 
   setAnthropicApiKey: (key: string) => void;
@@ -170,7 +171,7 @@ interface SettingsState {
 
   // Claude Code settings actions
   loadClaudeSettings: () => Promise<void>;
-  saveClaudeSetting: (key: string, value: any) => Promise<void>;
+  saveClaudeSetting: (key: string, value: unknown) => Promise<void>;
   getClaudeSetting: (key: string) => any;
   resetClaudeSetting: (key: string) => Promise<void>;
 
@@ -205,30 +206,30 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       const res = await fetch('/api/claude-settings');
       if (res.ok) {
         const data = await res.json();
-        set({ claudeSettings: data, claudeSettingsLoaded: true });
+        set({ claudeSettings: data as ClaudeCodeSettings, claudeSettingsLoaded: true });
       }
     } catch { /* Claude Code may not be installed */ }
   },
 
   saveClaudeSetting: async (key, value) => {
-    const current = get().claudeSettings;
+    const current = get().claudeSettings as Record<string, unknown>;
     // Build the delta to send
-    const delta: Record<string, any> = {};
+    const delta: Record<string, unknown> = {};
     const keys = key.split('.');
     if (keys.length === 1) {
       delta[key] = value;
     } else {
-      let d = delta;
+      let d: Record<string, unknown> = delta;
       for (let i = 0; i < keys.length - 1; i++) {
         d[keys[i]] = {};
-        d = d[keys[i]];
+        d = d[keys[i]] as Record<string, unknown>;
       }
       d[keys[keys.length - 1]] = value;
     }
 
     // Optimistic local update
     const next = deepSet(current, key, value);
-    set({ claudeSettings: next });
+    set({ claudeSettings: next as unknown as ClaudeCodeSettings });
 
     try {
       await fetch('/api/claude-settings', {
@@ -240,26 +241,26 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   getClaudeSetting: (key) => {
-    const val = deepGet(get().claudeSettings, key);
+    const val = deepGet(get().claudeSettings as Record<string, unknown>, key);
     if (val !== undefined) return val;
     return CLAUDE_SETTING_DEFAULTS[key];
   },
 
   resetClaudeSetting: async (key) => {
-    const current = get().claudeSettings;
+    const current = get().claudeSettings as Record<string, unknown>;
     const next = deepDelete(current, key);
-    set({ claudeSettings: next });
+    set({ claudeSettings: next as unknown as ClaudeCodeSettings });
 
     // Send null to delete
-    const delta: Record<string, any> = {};
+    const delta: Record<string, unknown> = {};
     const keys = key.split('.');
     if (keys.length === 1) {
       delta[key] = null;
     } else {
-      let d = delta;
+      let d: Record<string, unknown> = delta;
       for (let i = 0; i < keys.length - 1; i++) {
         d[keys[i]] = {};
-        d = d[keys[i]];
+        d = d[keys[i]] as Record<string, unknown>;
       }
       d[keys[keys.length - 1]] = null;
     }
@@ -399,14 +400,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         azureDevopsUserId: userId,
       });
       return connected;
-    } catch (err: any) {
-      set({ azureDevopsConnected: false, azureDevopsConnectionError: err.message });
+    } catch (err) {
+      set({ azureDevopsConnected: false, azureDevopsConnectionError: err instanceof Error ? err.message : 'Unknown error' });
       return false;
     }
   },
 
   disconnectAzureDevops: () => {
-    fetch('/api/azure-devops/disconnect', { method: 'POST' }).catch(() => {});
+    fetch('/api/azure-devops/disconnect', { method: 'POST' }).catch((err) => { console.warn('Failed to disconnect Azure DevOps', err); });
     set({ azureDevopsConnected: false, azureDevopsConnectionError: null });
   },
 }));
