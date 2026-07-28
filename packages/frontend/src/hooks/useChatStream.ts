@@ -412,11 +412,10 @@ export function useChatStream({
     onMessage: (msg) => {
       if ('chatId' in msg && msg.chatId !== chatId) return;
       if (msg.type === 'event') {
-        const event = msg.event as AppEvent;
         if (msg.subagentId) {
-          useSubagentStore.getState().pushEvent(msg.subagentId, event);
+          useSubagentStore.getState().pushEvent(msg.subagentId, msg.event);
         } else {
-          handleEvent(event);
+          handleEvent(msg.event);
         }
       } else if (msg.type === 'session_ready') {
         updateChatSessionId(tabId, chatId, msg.sessionId);
@@ -562,7 +561,7 @@ export function useChatStream({
       activateChat(tabId, chatId);
     }
     useEventBus.getState().clearTasks();
-    // Build prompt with images if any
+    // Build prompt content with images if attached
     const images = imagesRef.current;
     const promptContent: string | unknown[] = images.length > 0
       ? [
@@ -573,10 +572,8 @@ export function useChatStream({
           })),
         ]
       : prompt;
-
-    // Show user message with image indicator
     const displayText = images.length > 0
-      ? prompt + (images.length > 0 ? `\n\n[${images.length} attached image${images.length > 1 ? 's' : ''}]` : '')
+      ? prompt + `\n\n[${images.length} attached image${images.length > 1 ? 's' : ''}]`
       : prompt;
     setMessages((prev) => [...prev, { role: 'user', content: displayText, id: crypto.randomUUID(), timestamp: new Date().toISOString(), images: images.length > 0 ? images : undefined }]);
     updateChatLastMessage(tabId, chatId);
@@ -638,12 +635,13 @@ export function useChatStream({
     // Refs
     messagesEndRef,
     thinkingBlocksRef,
-    imagesRef,
     // Actions
     handleSend,
     abort: () => send({ type: 'abort' }),
     handleSegmentClick,
     isSegmentCollapsed,
     handleToggleThinkingExpand,
+    // Image paste
+    imagesRef,
   };
 }

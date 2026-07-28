@@ -1,4 +1,4 @@
-import type { ThinkingTool } from '@cc-gui/shared';
+import type { ThinkingTool } from './types';
 
 /** Summary generated for a thinking segment (first sentence for now, AI later) */
 export function thinkingSummary(text: string): string {
@@ -31,5 +31,13 @@ export function formatChatTime(iso: string): string {
   return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
 }
 
-// Re-export from shared for convenience
-export { toolInputDetail } from '@cc-gui/shared';
+/**
+ * Extract a human-readable detail string from a tool's input.
+ * Used by both ChatPanel (thinking blocks) and SubagentStore (subagent tracking).
+ */
+export function toolInputDetail(toolName: string, toolInput: Record<string, unknown>): string {
+  if (toolInput?.query) return `"${String(toolInput.query).slice(0, 60)}"`;
+  if (toolInput?.url) return String(toolInput.url).slice(0, 60);
+  if (Object.keys(toolInput).length > 0) return JSON.stringify(toolInput).slice(0, 80);
+  return '';
+}

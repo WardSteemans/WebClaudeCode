@@ -1,12 +1,72 @@
 import { create } from 'zustand';
-import { ClaudeCodeSettings, CLAUDE_SETTING_DEFAULTS, ALL_MODELS, deepGet, deepSet, deepDelete } from '@cc-gui/shared';
-import type { ModelOption } from '@cc-gui/shared';
+import { ClaudeCodeSettings, CLAUDE_SETTING_DEFAULTS } from '@cc-gui/shared';
 import { safeGetItem } from '../lib/storage';
+
+// ==================== Deep get/set helpers ====================
+
+function deepGet(obj: Record<string, unknown>, path: string): unknown {
+  const keys = path.split('.');
+  let current: unknown = obj;
+  for (const key of keys) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+function deepSet(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
+  const keys = path.split('.');
+  const result = { ...obj };
+  let current: Record<string, unknown> = result;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (!(keys[i] in current) || typeof current[keys[i]] !== 'object') {
+      current[keys[i]] = {};
+    } else {
+      current[keys[i]] = { ...(current[keys[i]] as Record<string, unknown>) };
+    }
+    current = current[keys[i]] as Record<string, unknown>;
+  }
+  current[keys[keys.length - 1]] = value;
+  return result;
+}
+
+function deepDelete(obj: Record<string, unknown>, path: string): Record<string, unknown> {
+  const keys = path.split('.');
+  if (keys.length === 1) {
+    const { [keys[0]]: _, ...rest } = obj;
+    return rest;
+  }
+  const parent = deepGet(obj, keys.slice(0, -1).join('.'));
+  if (!parent || typeof parent !== 'object') return obj;
+  const result = deepSet(obj, keys.slice(0, -1).join('.'), { ...(parent as Record<string, unknown>) });
+  const lastKey = keys[keys.length - 1];
+  const parentClone = deepGet(result, keys.slice(0, -1).join('.'));
+  if (parentClone && typeof parentClone === 'object') {
+    delete (parentClone as Record<string, unknown>)[lastKey];
+  }
+  return result;
+}
 
 // ==================== Model Catalog ====================
 
-export type { ModelOption };
-export { ALL_MODELS };
+export interface ModelOption {
+  id: string;
+  label: string;
+  provider: 'anthropic' | 'deepseek';
+  subagentModel?: string;
+}
+
+export const ALL_MODELS: ModelOption[] = [
+  { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', provider: 'anthropic', subagentModel: 'claude-3-5-haiku-20241022' },
+  { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', provider: 'anthropic', subagentModel: 'claude-3-5-haiku-20241022' },
+  { id: 'claude-opus-4-20250514', label: 'Claude Opus 4', provider: 'anthropic', subagentModel: 'claude-3-5-haiku-20241022' },
+  { id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', provider: 'anthropic' },
+  { id: 'deepseek-v4-pro[1m]', label: 'DeepSeek V4 Pro (1M)', provider: 'deepseek', subagentModel: 'deepseek-v4-flash' },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', provider: 'deepseek', subagentModel: 'deepseek-v4-flash' },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', provider: 'deepseek' },
+  { id: 'deepseek-r1', label: 'DeepSeek R1', provider: 'deepseek', subagentModel: 'deepseek-v4-flash' },
+  { id: 'deepseek-v3', label: 'DeepSeek V3', provider: 'deepseek', subagentModel: 'deepseek-v4-flash' },
+];
 
 export interface AutoTitleTier {
   upTo: number;
@@ -221,11 +281,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setAnthropicApiKey: (key) => {
-    set({ anthropicApiKey: key.trim() });
+    set({ anthropicApiKey: key });
     debouncedSave(toSettings(get()));
   },
   setDeepseekApiKey: (key) => {
-    set({ deepseekApiKey: key.trim() });
+    set({ deepseekApiKey: key });
     debouncedSave(toSettings(get()));
   },
   setDeepseekBaseUrl: (url) => {

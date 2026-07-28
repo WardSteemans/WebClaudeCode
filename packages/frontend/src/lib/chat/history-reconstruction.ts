@@ -1,6 +1,5 @@
-import type { ChatMessage, ThinkingTool, ThinkingSegment, ThinkingBlock } from '@cc-gui/shared';
+import type { ChatMessage, ThinkingTool, ThinkingSegment, ThinkingBlock } from './types';
 import { thinkingSummary } from './thinking-utils';
-import { toolInputDetail } from '@cc-gui/shared';
 
 // ==================== Types ====================
 
@@ -125,7 +124,10 @@ export function reconstructHistory(raw: HistoryMessage[]): {
               summary: thinkingSummary(text),
             });
           } else if (isToolUse(b)) {
-            const detail = toolInputDetail(b.name || 'unknown', b.input || {});
+            let detail = '';
+            if (b.input?.query) detail = `"${String(b.input.query).slice(0, 60)}"`;
+            else if (b.input?.url) detail = String(b.input.url).slice(0, 60);
+            else if (b.input && Object.keys(b.input).length > 0) detail = JSON.stringify(b.input).slice(0, 80);
 
             const tool: ThinkingTool = {
               id: crypto.randomUUID(),
