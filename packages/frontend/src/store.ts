@@ -15,7 +15,7 @@ function apiStorage() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
-    }).catch(() => {});
+    }).catch((err) => { console.warn('Failed to persist tab state', err); });
   };
 
   return createJSONStorage(() => ({
@@ -41,7 +41,7 @@ function apiStorage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tabs: [], activeTabId: null }),
-      }).catch(() => {});
+      }).catch((err) => { console.warn('Failed to clear tab state', err); });
     },
   }));
 }
@@ -353,9 +353,9 @@ export const useTabStore = create<TabState>()(
             chats: Array.isArray(t.chats)
               ? (t.chats as Array<Record<string, unknown>>).map((c: Record<string, unknown>) => ({
                   ...c,
-                  folderId: (c as any).folderId || null,
-                  pinned: (c as any).pinned || false,
-                  archived: (c as any).archived || false,
+                  folderId: (c.folderId as string | null | undefined) ?? null,
+                  pinned: (c.pinned as boolean) || false,
+                  archived: (c.archived as boolean) || false,
                 }))
               : [],
           }));
@@ -365,7 +365,7 @@ export const useTabStore = create<TabState>()(
         if (version < 6) {
           migrated = migrated.map((t) => ({
             ...t,
-            hiddenSessionIds: (t as any).hiddenSessionIds || [],
+            hiddenSessionIds: (t.hiddenSessionIds as string[] | undefined) || [],
           }));
         }
 
@@ -376,7 +376,7 @@ export const useTabStore = create<TabState>()(
             chats: Array.isArray(t.chats)
               ? (t.chats as Array<Record<string, unknown>>).map((c: Record<string, unknown>) => ({
                   ...c,
-                  lastMessageAt: (c as any).lastMessageAt || c.createdAt || null,
+                  lastMessageAt: (c.lastMessageAt as number | null | undefined) ?? c.createdAt ?? null,
                 }))
               : [],
           }));
@@ -389,7 +389,7 @@ export const useTabStore = create<TabState>()(
             chats: Array.isArray(t.chats)
               ? (t.chats as Array<Record<string, unknown>>).map((c: Record<string, unknown>) => ({
                   ...c,
-                  effort: (c as any).effort || null,
+                  effort: (c.effort as string | null | undefined) ?? null,
                 }))
               : [],
           }));
@@ -402,7 +402,7 @@ export const useTabStore = create<TabState>()(
             chats: Array.isArray(t.chats)
               ? (t.chats as Array<Record<string, unknown>>).map((c: Record<string, unknown>) => ({
                   ...c,
-                  permissionMode: (c as any).permissionMode || null,
+                  permissionMode: (c.permissionMode as string | null | undefined) ?? null,
                 }))
               : [],
           }));
@@ -415,7 +415,7 @@ export const useTabStore = create<TabState>()(
             chats: Array.isArray(t.chats)
               ? (t.chats as Array<Record<string, unknown>>).map((c: Record<string, unknown>) => ({
                   ...c,
-                  model: (c as any).model || null,
+                  model: (c.model as string | null | undefined) ?? null,
                 }))
               : [],
           }));

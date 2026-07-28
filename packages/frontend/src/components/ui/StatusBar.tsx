@@ -1,6 +1,6 @@
 import { GitBranch, Wifi, HardDrive, GitFork, MessageSquare } from 'lucide-react';
-import { useTabStore } from '../store';
-import { useEventBus } from '../store/eventBus';
+import { useTabStore } from '../../store';
+import { useEventBus } from '../../store/eventBus';
 import { useEffect, useState } from 'react';
 
 interface GitInfo {
@@ -33,7 +33,7 @@ export function StatusBar() {
           worktreePath: d.worktreePath,
         });
       })
-      .catch(() => setGitInfo(null));
+      .catch((err) => { console.warn('Failed to fetch git info', err); setGitInfo(null); });
   }, [chatWorkDir, activeTab?.id]);
 
   const status = activeTabId ? tabStatuses[activeTabId] || 'idle' : 'idle';

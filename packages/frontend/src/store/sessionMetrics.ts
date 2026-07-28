@@ -228,7 +228,7 @@ function saveMetricsToDb(sessionId: string, entry: SessionMetricsEntry) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, data: entry }),
-    }).catch(() => {});
+    }).catch((err) => { console.warn('Failed to load metrics', err); });
   }, 500);
 }
 

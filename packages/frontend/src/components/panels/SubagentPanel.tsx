@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, forwardRef, useCallback } from 'react';
-import { useEventBus, type TaskEntry } from '../store/eventBus';
-import { useSubagentStore, type SubagentSession, type SubagentThinkingBlock } from '../store/subagentStore';
-import { useSettingsStore } from '../store/settingsStore';
+import { useEventBus, type TaskEntry } from '../../store/eventBus';
+import { useSubagentStore, type SubagentSession, type SubagentThinkingBlock } from '../../store/subagentStore';
+import { safeGetItem } from '../../lib/storage';
+import { useSettingsStore } from '../../store/settingsStore';
 import { ChevronDown, ChevronRight, Check, X, Loader, Braces, ChevronsRight, Trash2, Play, Square, Send } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -47,7 +48,7 @@ export const SubagentPanel = forwardRef<HTMLDivElement, SubagentPanelProps>(
       // Build env vars from settings using current model
       const env: Record<string, string> = {};
       const settingsEnv = useSettingsStore.getState().getEnvVarsForModel(
-        localStorage.getItem('cc-gui-model') || 'claude-sonnet-4-20250514'
+        safeGetItem('cc-gui-model') || 'claude-sonnet-4-20250514'
       );
       for (const [k, v] of Object.entries(settingsEnv)) {
         if (v) env[k] = v;

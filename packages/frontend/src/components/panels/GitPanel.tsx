@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { GitBranch, GitCommit, ArrowUp, ArrowDown, RefreshCw, Plus, Minus, ChevronDown, ChevronRight, Folder, File } from 'lucide-react';
-import { DiffViewer } from './DiffViewer';
+import { DiffViewer } from '../files/DiffViewer';
 
 interface GitStatus {
   branch: string;
@@ -49,7 +49,7 @@ export function GitPanel({ workDir }: GitPanelProps) {
     if (!workDir) return;
     const interval = setInterval(fetchStatus, 10000);
     return () => clearInterval(interval);
-  }, [fetchStatus]);
+  }, [fetchStatus, workDir]);
 
   const run = async (fn: () => Promise<Response>) => {
     setOutput('');

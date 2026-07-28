@@ -4,8 +4,8 @@ import {
   ChevronRight, ChevronDown, Plus,
 } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
-import { useTabStore, Chat, ChatFolder } from '../store';
-import { ContextMenu, ContextMenuItem } from './ContextMenu';
+import { useTabStore, Chat, ChatFolder } from '../../store';
+import { ContextMenu, ContextMenuItem } from '../ui/ContextMenu';
 
 /** Format epoch ms for sidebar display */
 function chatTime(ms: number | null): string {
@@ -85,7 +85,7 @@ export function ChatList({ tabId, workDir }: ChatListProps) {
           updateChatSessionId(tabId, chatId, s.sessionId);
         }
       })
-      .catch(() => {});
+      .catch((err) => { console.warn('Failed to load sessions', err); });
   }, [workDir, tab?.id]);
 
   if (!tab || !tab.chats) return null;

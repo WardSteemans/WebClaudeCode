@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { X, AlertTriangle, Info, AlertCircle } from 'lucide-react';
-import { useEventBus } from '../store/eventBus';
+import { useEventBus } from '../../store/eventBus';
 
 const iconMap = {
   info: Info,

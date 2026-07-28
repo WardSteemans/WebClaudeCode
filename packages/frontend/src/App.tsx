@@ -7,21 +7,21 @@ import { useTabStore } from './store';
 import { useEventBus } from './store/eventBus';
 import { useSettingsStore } from './store/settingsStore';
 import { useSessionMetrics } from './store/sessionMetrics';
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { FileExplorer } from './components/FileExplorer';
-import { FileViewer } from './components/FileViewer';
-import { TabView } from './components/TabView';
-import { ChatList } from './components/ChatList';
-import { GitPanel } from './components/GitPanel';
-import { AzureDevOpsPanel } from './components/AzureDevOpsPanel';
-import { SettingsModal } from './components/SettingsModal';
-import { SessionOverview } from './components/SessionOverview';
-import { ActivityTimeline } from './components/ActivityTimeline';
-import { Notifications } from './components/Notifications';
-import { SubagentPanel } from './components/SubagentPanel';
-import { CapabilitiesPanel } from './components/CapabilitiesPanel';
-import { StatusBar } from './components/StatusBar';
-import { FolderPicker } from './components/FolderPicker';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { FileExplorer } from './components/files/FileExplorer';
+import { FileViewer } from './components/files/FileViewer';
+import { TabView } from './components/chat/TabView';
+import { ChatList } from './components/chat/ChatList';
+import { GitPanel } from './components/panels/GitPanel';
+import { AzureDevOpsPanel } from './components/panels/AzureDevOpsPanel';
+import { SettingsModal } from './components/settings/SettingsModal';
+import { SessionOverview } from './components/panels/SessionOverview';
+import { ActivityTimeline } from './components/panels/ActivityTimeline';
+import { Notifications } from './components/ui/Notifications';
+import { SubagentPanel } from './components/panels/SubagentPanel';
+import { CapabilitiesPanel } from './components/panels/CapabilitiesPanel';
+import { StatusBar } from './components/ui/StatusBar';
+import { FolderPicker } from './components/files/FolderPicker';
 
 export default function App() {
   const tabs = useTabStore((s) => s.tabs);
@@ -91,6 +91,13 @@ export default function App() {
     useSettingsStore.getState().loadFromDb();
     useSettingsStore.getState().loadClaudeSettings();
     useSessionMetrics.getState().loadMetricsFromDb();
+  }, []);
+
+  // Listen for external requests to open settings (e.g. from Azure DevOps panel)
+  useEffect(() => {
+    const handler = () => setShowSettings(true);
+    window.addEventListener('cc-gui:open-settings', handler);
+    return () => window.removeEventListener('cc-gui:open-settings', handler);
   }, []);
 
   const explorer = useResizable(240, 100, 500);

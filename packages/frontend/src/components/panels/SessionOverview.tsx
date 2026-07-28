@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { BarChart3, Cpu, Clock, Zap, DollarSign, Layers, ChevronDown, ChevronRight } from 'lucide-react';
-import { useSessionMetrics, formatTokens, formatDuration, formatCost, aggregateModels, type SessionMetricsEntry, type SessionMetricsAggregated } from '../store/sessionMetrics';
+import { useSessionMetrics, formatTokens, formatDuration, formatCost, aggregateModels, type SessionMetricsEntry, type SessionMetricsAggregated } from '../../store/sessionMetrics';
 import type { ModelUsage } from '@cc-gui/shared';
 
 // ==================== Session Overview ====================

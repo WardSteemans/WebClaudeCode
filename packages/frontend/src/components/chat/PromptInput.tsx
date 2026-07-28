@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { SLASH_COMMANDS, SlashCommand } from '../data/commands';
-import { useEventBus } from '../store/eventBus';
+import { SLASH_COMMANDS, SlashCommand } from '../../data/commands';
+import { useEventBus } from '../../store/eventBus';
 
 // ==================== Types ====================
 

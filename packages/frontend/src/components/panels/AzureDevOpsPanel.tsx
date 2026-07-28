@@ -6,8 +6,8 @@ import {
   FileCode, ArrowRightLeft, Dot, Shield, ShieldCheck, ShieldAlert,
   GitCommit, Loader2, AlertTriangle, Play, UserCheck,
 } from 'lucide-react';
-import { useSettingsStore } from '../store/settingsStore';
-import { useTabStore } from '../store';
+import { useSettingsStore } from '../../store/settingsStore';
+import { useTabStore } from '../../store';
 
 // ── Types ──
 
@@ -93,7 +93,7 @@ export function AzureDevOpsPanel({ workDir }: { workDir: string | null }) {
             </p>
           </div>
           <button
-            onClick={() => document.querySelector<HTMLButtonElement>('[title="Settings"]')?.click()}
+            onClick={() => window.dispatchEvent(new CustomEvent('cc-gui:open-settings'))}
             className="px-4 py-2 bg-accent-600 hover:bg-accent-500 text-white rounded-lg text-[13px] font-medium transition-colors shadow-sm"
           >
             Open Settings
@@ -234,8 +234,8 @@ function PullRequestsView({ project, repoId, workDir }: { project: string; repoI
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       const data = await res.json();
       setPrs(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
     }
     setLoading(false);
   }, [project, repoId, filter, assignedToMe, azureDevopsUserId]);
@@ -632,8 +632,8 @@ function BranchesView({ project, repoId }: { project: string; repoId: string }) 
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       const data = await res.json();
       setBranches(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
     }
     setLoading(false);
   }, [project, repoId, search]);
