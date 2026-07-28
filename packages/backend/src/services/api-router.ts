@@ -14,7 +14,7 @@ interface UpstreamConfig {
   visionModel: string;
 }
 
-interface ImageBlock {
+export interface ImageBlock {
   type: 'image';
   source: { type: string; media_type: string; data: string };
 }
@@ -79,7 +79,7 @@ function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> 
 
 // ── Image detection ──
 
-function hasImages(obj: unknown): boolean {
+export function hasImages(obj: unknown): boolean {
   if (!obj || typeof obj !== 'object') return false;
   if (Array.isArray(obj)) return obj.some(hasImages);
 
@@ -88,7 +88,7 @@ function hasImages(obj: unknown): boolean {
   return Object.values(record).some(v => hasImages(v));
 }
 
-function extractImages(obj: unknown): ImageBlock[] {
+export function extractImages(obj: unknown): ImageBlock[] {
   const images: ImageBlock[] = [];
   _collectImages(obj, images);
   return images;
@@ -109,8 +109,8 @@ function _collectImages(obj: unknown, out: ImageBlock[]): void {
 
 // ── Request rewriting ──
 
-function rewriteBody(body: JsonValue, description: string): JsonValue {
-  return _replaceImages(structuredClone(body), description);
+export function rewriteBody(body: unknown, description: string): unknown {
+  return _replaceImages(structuredClone(body) as JsonValue, description);
 }
 
 function _replaceImages(obj: JsonValue, description: string): JsonValue {
@@ -135,8 +135,8 @@ function _replaceImages(obj: JsonValue, description: string): JsonValue {
   return result;
 }
 
-function stripImages(body: JsonValue): JsonValue {
-  return _stripImages(structuredClone(body));
+export function stripImages(body: unknown): unknown {
+  return _stripImages(structuredClone(body) as JsonValue);
 }
 
 function _stripImages(obj: JsonValue): JsonValue {
@@ -145,12 +145,7 @@ function _stripImages(obj: JsonValue): JsonValue {
   if (Array.isArray(obj)) {
     return (obj as JsonArray)
       .map(item => _stripImages(item))
-      .filter(item => {
-        if (item && typeof item === 'object' && !Array.isArray(item)) {
-          return (item as JsonObject).type !== 'image';
-        }
-        return true;
-      });
+      .filter(item => item !== null);
   }
 
   const record = obj as JsonObject;
