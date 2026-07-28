@@ -16,7 +16,7 @@ import { registerLogRoutes } from './routes/log.js';
 
 const log = createLogger('server');
 
-const PORT = Number(process.env.PORT) || 3001;
+const PORT = parseInt(process.env.PORT ?? '', 10) || 3001;
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));

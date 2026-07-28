@@ -2,6 +2,8 @@ import { readdirSync, readFileSync, existsSync, openSync, readSync, closeSync } 
 import { join } from 'path';
 import { homedir } from 'os';
 import { createLogger } from '../logger.js';
+import { normalizeBlocks, blocksToText } from '../services/contentNormalizer.js';
+import type { RawClaudeEvent } from '../services/eventParser/eventTypes.js';
 
 const log = createLogger('sessions');
 
@@ -51,7 +53,7 @@ export function listSessions(workDir: string): SessionMeta[] {
     try {
       const content = readHead(join(dir, file), 65536);
       if (!content) continue;
-      const lines = content.split('\n').filter((l: string) => l.trim());
+      const lines = content.split('\n').filter(l => l.trim());
       if (lines.length > 0 && !content.endsWith('\n')) lines.pop();
 
       let title = 'Untitled';
@@ -60,23 +62,21 @@ export function listSessions(workDir: string): SessionMeta[] {
       let sessionWorkDir: string | undefined;
       for (const line of lines) {
         try {
-          const evt = JSON.parse(line);
+          const evt = JSON.parse(line) as RawClaudeEvent;
+          // Extract title from first user message
           if (title === 'Untitled' && evt.type === 'user' && evt.message?.role === 'user') {
             try {
-              const raw = evt.message?.content;
-              if (typeof raw === 'string') {
-                try { title = JSON.parse(raw).messages?.[0]?.content || raw.slice(0, 80); } catch { title = raw.slice(0, 80); }
-              } else if (Array.isArray(raw)) {
-                title = raw.filter((b: any) => b.type === 'text' && b.text).map((b: any) => b.text).join(' ').slice(0, 80);
-              } else if (raw?.[0]?.text) {
-                title = raw[0].text.slice(0, 80);
-              }
+              const blocks = normalizeBlocks(evt.message);
+              title = blocksToText(blocks).slice(0, 80) || 'Untitled';
             } catch { /* keep Untitled */ }
           }
-          if ((evt.type === 'user' && evt.message?.role === 'user') || (evt.type === 'assistant' && evt.message?.role === 'assistant')) msgCount++;
-          if (!timestamp && evt.timestamp) timestamp = evt.timestamp;
-          if (!sessionWorkDir && evt.type === 'system' && evt.subtype === 'init' && evt.add_dir) {
-            sessionWorkDir = evt.add_dir as string;
+          // Count user/assistant messages (type is sufficient discriminator)
+          if (evt.type === 'user' || evt.type === 'assistant') msgCount++;
+          if (!timestamp && 'timestamp' in evt) timestamp = (evt as unknown as Record<string, unknown>).timestamp as string;
+          // Extract workDir from system init event
+          if (!sessionWorkDir && evt.type === 'system' && evt.subtype === 'init') {
+            const sysEvt = evt as unknown as Record<string, unknown>;
+            if (sysEvt.cwd) sessionWorkDir = sysEvt.cwd as string;
           }
         } catch { /* skip malformed lines */ }
       }

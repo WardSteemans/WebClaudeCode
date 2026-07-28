@@ -1,7 +1,17 @@
 import express from 'express';
 import * as https from 'https';
 
-function generateFallbackTitle(messages: Array<{ role: string; content: string }>): string {
+interface ChatMessage {
+  role: string;
+  content: string;
+}
+
+interface ContentBlock {
+  type: string;
+  text?: string;
+}
+
+function generateFallbackTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find(m => m.role === 'user');
   if (firstUser) {
     return firstUser.content.replace(/[\n\r]/g, ' ').slice(0, 50).trim();
@@ -28,9 +38,9 @@ export function registerChatsRoutes(app: express.Express): void {
 
     // Build conversation summary
     const conversationText = messages
-      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+      .filter((m: ChatMessage) => m.role === 'user' || m.role === 'assistant')
       .slice(-6)
-      .map((m: any) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${String(m.content).slice(0, 500)}`)
+      .map((m: ChatMessage) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${String(m.content).slice(0, 500)}`)
       .join('\n\n');
 
     const body = JSON.stringify({
@@ -69,8 +79,8 @@ export function registerChatsRoutes(app: express.Express): void {
           let title = '';
           if (parsed.content && Array.isArray(parsed.content)) {
             title = parsed.content
-              .filter((b: any) => b.type === 'text' && b.text)
-              .map((b: any) => b.text)
+              .filter((b: ContentBlock) => b.type === 'text' && b.text)
+              .map((b: ContentBlock) => b.text)
               .join('');
           }
           title = title.replace(/^["'\s]+|["'\s]+$/g, '').trim();

@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { createLogger } from '../logger.js';
+import type { RawSystemEvent } from '../services/eventParser/eventTypes.js';
 
 const log = createLogger('session');
 
@@ -80,10 +81,11 @@ export function startSession(opts: SessionOptions): ActiveSession {
 
     // Check for real session ID in system init
     try {
-      const parsed = JSON.parse(line);
+      const parsed = JSON.parse(line) as RawSystemEvent;
       if (parsed.type === 'system' && parsed.subtype === 'init' && parsed.session_id) {
-        realSessionId = parsed.session_id as string;
-        opts.onSessionReady?.(realSessionId);
+        const id = parsed.session_id;
+        realSessionId = id;
+        opts.onSessionReady?.(id);
       }
     } catch { /* not JSON, skip */ }
 

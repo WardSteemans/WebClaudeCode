@@ -53,7 +53,7 @@ export function registerAzureDevOpsRoutes(app: express.Express): void {
       const prs = await azureDevOps.getPullRequests(
         project,
         repositoryId,
-        (status as any) || 'all',
+        (status as 'active' | 'completed' | 'abandoned' | 'all') || 'all',
         parseInt(top || '50', 10),
         parseInt(skip || '0', 10),
         reviewerId || undefined,

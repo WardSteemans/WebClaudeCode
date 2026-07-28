@@ -96,27 +96,27 @@ export function saveSettings(settings: Record<string, string>): void {
 
 // ── Session Metrics ──
 
-export function getSessionMetrics(sessionId: string): object | null {
+export function getSessionMetrics(sessionId: string): Record<string, unknown> | null {
   const d = ensureDb();
   const rows = d.exec('SELECT data FROM session_metrics WHERE session_id = ?', [sessionId]);
   if (rows.length > 0 && rows[0].values.length > 0) {
-    return JSON.parse(rows[0].values[0][0] as string);
+    return JSON.parse(rows[0].values[0][0] as string) as Record<string, unknown>;
   }
   return null;
 }
 
-export function getAllSessionMetrics(): Array<{ sessionId: string; data: object; updatedAt: string }> {
+export function getAllSessionMetrics(): Array<{ sessionId: string; data: Record<string, unknown>; updatedAt: string }> {
   const d = ensureDb();
   const rows = d.exec('SELECT session_id, data, updated_at FROM session_metrics ORDER BY updated_at DESC');
   if (rows.length === 0) return [];
-  return rows[0].values.map((row: any[]) => ({
+  return rows[0].values.map((row: unknown[]) => ({
     sessionId: row[0] as string,
     data: JSON.parse(row[1] as string),
     updatedAt: row[2] as string,
   }));
 }
 
-export function saveSessionMetrics(sessionId: string, data: object): void {
+export function saveSessionMetrics(sessionId: string, data: Record<string, unknown>): void {
   const d = ensureDb();
   d.run(
     'INSERT OR REPLACE INTO session_metrics (session_id, data, updated_at) VALUES (?, ?, ?)',

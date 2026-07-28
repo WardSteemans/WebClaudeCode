@@ -1,5 +1,6 @@
 import * as azdev from 'azure-devops-node-api';
 import { createLogger } from '../logger.js';
+import { PR_STATUS, type RawReviewer, type RawThread, type RawThreadComment, type RawIteration, type RawIterationCommit, type RawCommitRef, type RawWorkItem } from './azure-devops-types.js';
 
 const log = createLogger('azure-devops');
 
@@ -38,9 +39,9 @@ export async function connect(config: AdzConfig): Promise<boolean> {
     authenticatedUserName = connData?.authenticatedUser?.providerDisplayName ?? '';
     log.end('connect', { userId: authenticatedUserId });
     return true;
-  } catch (err: any) {
-    log.fail('connect', err);
-    connectionError = err.message || String(err);
+  } catch (err: unknown) {
+    log.fail('connect', err as Error);
+    connectionError = (err as Error).message || String(err);
     connection = null;
     return false;
   }
@@ -68,7 +69,7 @@ function getConn(): azdev.WebApi {
 
 // ── Internal: fetch PR threads via REST (not exposed on IGitApi) ──
 
-async function fetchThreads(repoId: string, prId: number, project: string): Promise<any[]> {
+async function fetchThreads(repoId: string, prId: number, project: string): Promise<RawThread[]> {
   const orgUrl = currentOrgUrl;
   const url = `${orgUrl}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repoId)}/pullRequests/${prId}/threads?api-version=7.1`;
   const authToken = Buffer.from(`:${currentPat}`).toString('base64');
@@ -76,8 +77,8 @@ async function fetchThreads(repoId: string, prId: number, project: string): Prom
     headers: { Authorization: `Basic ${authToken}`, Accept: 'application/json' },
   });
   if (!res.ok) return [];
-  const data: any = await res.json();
-  return (data as any).value ?? data ?? [];
+  const data: { value?: RawThread[] } = await res.json();
+  return data.value ?? (data as unknown as RawThread[]) ?? [];
 }
 
 // ── Projects ──
@@ -150,9 +151,9 @@ export async function getPullRequests(
 ): Promise<AdzPullRequest[]> {
   const git = await getConn().getGitApi();
 
-  const searchCriteria: any = {};
+  const searchCriteria: { status?: number; reviewerId?: string } = {};
   if (status && status !== 'all') {
-    searchCriteria.status = status === 'active' ? 1 : (status === 'completed' ? 3 : 2);
+    searchCriteria.status = status === 'active' ? PR_STATUS.ACTIVE : (status === 'completed' ? PR_STATUS.COMPLETED : PR_STATUS.ABANDONED);
   }
   if (reviewerId) {
     searchCriteria.reviewerId = reviewerId;
@@ -171,7 +172,7 @@ export async function getPullRequests(
     targetBranch: pr.targetRefName?.replace('refs/heads/', '') ?? '',
     mergeStatus: String(pr.mergeStatus ?? 'unknown'),
     isDraft: pr.isDraft ?? false,
-    reviewers: (pr.reviewers ?? []).map((r: any) => ({
+    reviewers: (pr.reviewers ?? []).map((r: RawReviewer) => ({
       name: r.displayName ?? '',
       vote: r.vote ?? 0,
       hasDeclined: r.hasDeclined ?? false,
@@ -207,17 +208,17 @@ export async function getPullRequestDetail(
     targetBranch: pr.targetRefName?.replace('refs/heads/', '') ?? '',
     mergeStatus: String(pr.mergeStatus ?? 'unknown'),
     isDraft: pr.isDraft ?? false,
-    reviewers: (pr.reviewers ?? []).map((r: any) => ({
+    reviewers: (pr.reviewers ?? []).map((r: RawReviewer) => ({
       name: r.displayName ?? '',
       vote: r.vote ?? 0,
       hasDeclined: r.hasDeclined ?? false,
       isRequired: r.isRequired ?? false,
       voteLabel: voteLabel(r.vote ?? 0),
     })),
-    threads: (threads ?? []).map((t: any) => ({
+    threads: (threads ?? []).map((t: RawThread) => ({
       id: t.id ?? 0,
       status: t.status ?? 'unknown',
-      comments: (t.comments ?? []).map((c: any) => ({
+      comments: (t.comments ?? []).map((c: RawThreadComment) => ({
         id: c.id ?? 0,
         author: c.author?.displayName ?? '',
         content: c.content ?? '',
@@ -226,16 +227,16 @@ export async function getPullRequestDetail(
         isDeleted: c.isDeleted ?? false,
       })),
     })),
-    iterations: (iterations ?? []).map((i: any) => ({
+    iterations: (iterations ?? []).map((i: RawIteration) => ({
       id: i.id ?? 0,
       description: i.description ?? '',
-      commits: (i.commits ?? []).map((c: any) => ({
+      commits: (i.commits ?? []).map((c: RawIterationCommit) => ({
         id: (c.commitId ?? '').slice(0, 8),
         author: c.author?.name ?? '',
         message: c.comment ?? '',
       })),
     })),
-    commits: (commits ?? []).map((c: any) => ({
+    commits: (commits ?? []).map((c: RawCommitRef) => ({
       id: (c.commitId ?? '').slice(0, 8),
       author: c.author?.name ?? '',
       message: c.comment ?? '',
@@ -258,12 +259,12 @@ export async function getWorkItems(project: string, ids: number[]): Promise<AdzW
     undefined,
     project,
   );
-  return (items ?? []).map((wi: any) => ({
+  return (items ?? []).map((wi: RawWorkItem) => ({
     id: wi.id!,
-    title: wi.fields?.['System.Title'] ?? '',
-    state: wi.fields?.['System.State'] ?? '',
-    type: wi.fields?.['System.WorkItemType'] ?? '',
-    assignedTo: wi.fields?.['System.AssignedTo']?.displayName ?? '',
+    title: (wi.fields?.['System.Title'] as string) ?? '',
+    state: (wi.fields?.['System.State'] as string) ?? '',
+    type: (wi.fields?.['System.WorkItemType'] as string) ?? '',
+    assignedTo: (wi.fields?.['System.AssignedTo'] as { displayName?: string } | undefined)?.displayName ?? '',
     url: wi.url ?? '',
   }));
 }

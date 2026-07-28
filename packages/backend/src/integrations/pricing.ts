@@ -85,10 +85,10 @@ async function fetchPricing(url: string): Promise<PricingData | null> {
     // Validate: must have providers with models having input/output
     if (!json || typeof json.providers !== 'object') return null;
     for (const [, pp] of Object.entries(json.providers)) {
-      const p = pp as any;
+      const p = pp as { models?: Record<string, unknown> };
       if (!p.models || typeof p.models !== 'object') return null;
       for (const [, v] of Object.entries(p.models)) {
-        const m = v as any;
+        const m = v as { input?: unknown; output?: unknown };
         if (typeof m.input !== 'number' || typeof m.output !== 'number') return null;
       }
     }

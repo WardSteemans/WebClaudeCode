@@ -3,17 +3,14 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { getSettings, saveSettings } from '../data/db.js';
 
-function deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
-  const result = { ...target };
+function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...target };
   for (const [key, value] of Object.entries(source)) {
     if (value === null) {
-      // null = delete key (even nested)
       delete result[key];
     } else if (typeof value === 'object' && !Array.isArray(value) && typeof result[key] === 'object' && !Array.isArray(result[key])) {
-      // Deep merge objects
-      result[key] = deepMerge(result[key], value);
+      result[key] = deepMerge(result[key] as Record<string, unknown>, value as Record<string, unknown>);
     } else {
-      // Overwrite scalars and arrays
       result[key] = value;
     }
   }
@@ -32,8 +29,8 @@ export function registerSettingsRoutes(app: express.Express): void {
     try {
       saveSettings(req.body);
       res.json({ ok: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+    } catch (err: unknown) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 
@@ -47,14 +44,14 @@ export function registerSettingsRoutes(app: express.Express): void {
       const raw = readFileSync(CLAUDE_SETTINGS_PATH, 'utf-8');
       const parsed = JSON.parse(raw);
       res.json(parsed);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+    } catch (err: unknown) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 
   app.put('/api/claude-settings', express.json(), (req, res) => {
     try {
-      let current: Record<string, any> = {};
+      let current: Record<string, unknown> = {};
       if (existsSync(CLAUDE_SETTINGS_PATH)) {
         const raw = readFileSync(CLAUDE_SETTINGS_PATH, 'utf-8');
         current = JSON.parse(raw);
@@ -63,8 +60,8 @@ export function registerSettingsRoutes(app: express.Express): void {
       const next = deepMerge(current, req.body);
       writeFileSync(CLAUDE_SETTINGS_PATH, JSON.stringify(next, null, 2) + '\n');
       res.json({ ok: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+    } catch (err: unknown) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 }

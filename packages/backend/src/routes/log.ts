@@ -1,5 +1,5 @@
 import express from 'express';
-import { createLogger } from '../logger.js';
+import { createLogger, type LogLevel } from '../logger.js';
 
 export function registerLogRoutes(app: express.Express): void {
   app.post('/api/log', express.json(), (req, res) => {
@@ -16,8 +16,11 @@ export function registerLogRoutes(app: express.Express): void {
 
       if (!message) return res.status(400).json({ error: 'message required' });
 
+      const validLevels: LogLevel[] = ['ERROR', 'WARN', 'DEBUG'];
+      const logLevel: LogLevel = validLevels.includes(level as LogLevel) ? (level as LogLevel) : 'INFO';
+
       const frontendLog = createLogger(`fe:${module || 'unknown'}`);
-      switch (level) {
+      switch (logLevel) {
         case 'ERROR':
           frontendLog.error(message, error, { ...data, step, stepPhase });
           break;
@@ -32,8 +35,8 @@ export function registerLogRoutes(app: express.Express): void {
       }
 
       res.json({ ok: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
+    } catch (err: unknown) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 }
