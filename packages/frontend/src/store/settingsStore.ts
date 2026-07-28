@@ -221,11 +221,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setAnthropicApiKey: (key) => {
-    set({ anthropicApiKey: key });
+    set({ anthropicApiKey: key.trim() });
     debouncedSave(toSettings(get()));
   },
   setDeepseekApiKey: (key) => {
-    set({ deepseekApiKey: key });
+    set({ deepseekApiKey: key.trim() });
     debouncedSave(toSettings(get()));
   },
   setDeepseekBaseUrl: (url) => {
