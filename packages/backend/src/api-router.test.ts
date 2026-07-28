@@ -1,4 +1,4 @@
-import { hasImages, extractImages, rewriteBody, stripImages } from './services/api-router.js';
+import { hasImages, extractImages, rewriteBody, stripImages, buildUpstreamUrl } from './services/api-router.js';
 
 let passed = 0;
 let failed = 0;
@@ -81,6 +81,33 @@ const mrc = (mrw.messages as Array<{ content: Array<{ type: string; text: string
 assert(mrc.length === 3, '3 blocks');
 assert(mrc[1].type === 'text' && mrc[1].text.includes('desc'), 'img1 → text');
 assert(mrc[2].type === 'text' && mrc[2].text.includes('desc'), 'img2 → text');
+
+// ── URL construction (regression: new URL() dropping /anthropic) ──
+console.log('buildUpstreamUrl:');
+{
+  const u = buildUpstreamUrl('https://api.deepseek.com/anthropic');
+  assert(u.hostname === 'api.deepseek.com', 'hostname preserved');
+  assert(u.path === '/anthropic/v1/messages', 'path includes /anthropic');
+  assert(u.port === 443, 'default https port');
+}
+{
+  const u = buildUpstreamUrl('https://api.deepseek.com/anthropic/');
+  assert(u.path === '/anthropic/v1/messages', 'trailing slash stripped');
+}
+{
+  const u = buildUpstreamUrl('https://api.deepseek.com');
+  assert(u.path === '/v1/messages', 'no base path → /v1/messages');
+}
+{
+  const u = buildUpstreamUrl('https://openrouter.ai/api/v1');
+  assert(u.path === '/api/v1/v1/messages', 'nested path preserved');
+}
+{
+  const u = buildUpstreamUrl('http://localhost:8080/custom/path');
+  assert(u.hostname === 'localhost', 'localhost hostname');
+  assert(u.port === 8080, 'custom port');
+  assert(u.path === '/custom/path/v1/messages', 'custom path preserved');
+}
 
 console.log('');
 console.log(`Results: ${passed} passed, ${failed} failed`);

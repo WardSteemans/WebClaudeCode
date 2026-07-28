@@ -270,6 +270,15 @@ function getTlsOptions(): { rejectUnauthorized?: boolean } {
   return {};
 }
 
+// ── URL construction ──
+
+export function buildUpstreamUrl(baseUrl: string): { hostname: string; port: number; path: string } {
+  // Concatenate; do NOT use new URL('/v1/messages', baseUrl) — it drops the base path.
+  const full = baseUrl.replace(/\/+$/, '') + '/v1/messages';
+  const parsed = new URL(full);
+  return { hostname: parsed.hostname, port: parsed.port ? parseInt(parsed.port, 10) : 443, path: parsed.pathname };
+}
+
 // ── Streaming forward (with metrics) ──
 
 function forwardToUpstream(
@@ -280,9 +289,7 @@ function forwardToUpstream(
   res: Response,
   onDone: (statusCode: number, ttfbMs: number, error?: string) => void,
 ): void {
-  // Build full URL by concatenating — NOT using new URL() which drops the path
-  const fullUrl = targetBaseUrl.replace(/\/+$/, '') + '/v1/messages';
-  const parsedUrl = new URL(fullUrl);
+  const upstream = buildUpstreamUrl(targetBaseUrl);
   const startTime = Date.now();
   let firstByte = true;
   let ttfbMs = 0;
@@ -303,7 +310,7 @@ function forwardToUpstream(
   }
 
   const upstreamReq = https.request({
-    hostname: parsedUrl.hostname, port: parsedUrl.port || 443, path: parsedUrl.pathname, method: 'POST',
+    hostname: upstream.hostname, port: upstream.port, path: upstream.path, method: 'POST',
     headers: forwardHeaders,
     timeout: 300_000,
     ...getTlsOptions(),
