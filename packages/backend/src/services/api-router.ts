@@ -234,6 +234,7 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
         'content-length': Buffer.byteLength(body),
       },
       timeout: 60_000,
+      ...getTlsOptions(),
     }, (res) => {
       let data = '';
       res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
@@ -261,6 +262,14 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
   });
 }
 
+function getTlsOptions(): { rejectUnauthorized?: boolean } {
+  if (getSettings().apiRouterInsecureTls === 'true') {
+    log.warn('TLS verification disabled — apiRouterInsecureTls is set');
+    return { rejectUnauthorized: false };
+  }
+  return {};
+}
+
 // ── Streaming forward (with metrics) ──
 
 function forwardToUpstream(
@@ -284,6 +293,7 @@ function forwardToUpstream(
       'content-length': Buffer.byteLength(body),
     },
     timeout: 300_000,
+    ...getTlsOptions(),
   }, (upstreamRes) => {
     upstreamRes.on('data', (chunk: Buffer) => {
       if (firstByte) {
