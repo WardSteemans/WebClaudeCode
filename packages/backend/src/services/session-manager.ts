@@ -120,12 +120,13 @@ export function startSession(opts: SessionOptions): ActiveSession {
   });
 
   const sendPrompt = (prompt: string | unknown[]) => {
-    const content = Array.isArray(prompt) ? prompt : prompt;
+    const isArray = Array.isArray(prompt);
+    const content = isArray ? prompt : prompt;
     const message = JSON.stringify({
       type: 'user',
       message: { role: 'user', content },
     }) + '\n';
-    log.info(`sending prompt`, { sid, bytes: message.length });
+    log.info(`sending prompt`, { sid, bytes: message.length, hasImages: isArray, preview: message.slice(0, 120) });
     proc.stdin!.write(message);
     proc.stdin!.end();
   };
