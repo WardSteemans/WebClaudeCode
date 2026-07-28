@@ -295,15 +295,30 @@ function forwardToUpstream(
     timeout: 300_000,
     ...getTlsOptions(),
   }, (upstreamRes) => {
+    const isError = (upstreamRes.statusCode || 0) >= 400;
+    let errorBody = '';
+
     upstreamRes.on('data', (chunk: Buffer) => {
       if (firstByte) {
         ttfbMs = Date.now() - startTime;
         firstByte = false;
       }
       res.write(chunk);
+      if (isError && errorBody.length < 2000) {
+        errorBody += chunk.toString('utf-8');
+      }
     });
     upstreamRes.on('end', () => {
-      onDone(upstreamRes.statusCode || 0, ttfbMs);
+      let errorMsg: string | undefined;
+      if (isError && errorBody) {
+        try {
+          const parsed = JSON.parse(errorBody);
+          errorMsg = parsed?.error?.message || parsed?.error?.type || String(upstreamRes.statusCode);
+        } catch {
+          errorMsg = errorBody.slice(0, 100);
+        }
+      }
+      onDone(upstreamRes.statusCode || 0, ttfbMs, errorMsg);
       res.end();
     });
     res.writeHead(upstreamRes.statusCode || 200, upstreamRes.headers);
