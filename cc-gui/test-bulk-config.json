@@ -1,0 +1,21 @@
+{
+  "reduceMotion": true,
+  "fastMode": true,
+  "promptSuggestions": false,
+  "dynamicWorkflowSize": "restricted",
+  "terminalProgressBar": false,
+  "showTurnDuration": false,
+  "worktreeBaseRef": "main",
+  "autoModePlan": false,
+  "gitignoreFilePicker": false,
+  "skipCopyPicker": true,
+  "copyOnSelect": false,
+  "openAgentsByDefault": true,
+  "language": "nl",
+  "editorMode": "vim",
+  "questionTimeout": "5m",
+  "showLastResponseInEditor": true,
+  "showPrStatusFooter": false,
+  "autoConnectIde": false,
+  "claudeInChromeDefault": false
+}

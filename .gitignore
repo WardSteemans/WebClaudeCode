@@ -1,0 +1,9 @@
+node_modules/
+dist/
+logs/
+*.log
+*.db
+.cc-gui.db
+.pricing-cache.json
+.reasonix/
+test-out.txt

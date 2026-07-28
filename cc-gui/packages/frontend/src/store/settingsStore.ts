@@ -1,0 +1,427 @@
+import { create } from 'zustand';
+import { ClaudeCodeSettings, CLAUDE_SETTING_DEFAULTS } from '@cc-gui/shared';
+
+// ==================== Deep get/set helpers ====================
+
+function deepGet(obj: Record<string, any>, path: string): any {
+  const keys = path.split('.');
+  let current: any = obj;
+  for (const key of keys) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+function deepSet(obj: Record<string, any>, path: string, value: any): Record<string, any> {
+  const keys = path.split('.');
+  const result = { ...obj };
+  let current = result;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (!(keys[i] in current) || typeof current[keys[i]] !== 'object') {
+      current[keys[i]] = {};
+    } else {
+      current[keys[i]] = { ...current[keys[i]] };
+    }
+    current = current[keys[i]];
+  }
+  current[keys[keys.length - 1]] = value;
+  return result;
+}
+
+function deepDelete(obj: Record<string, any>, path: string): Record<string, any> {
+  const keys = path.split('.');
+  if (keys.length === 1) {
+    const { [keys[0]]: _, ...rest } = obj;
+    return rest;
+  }
+  const parent = deepGet(obj, keys.slice(0, -1).join('.'));
+  if (!parent || typeof parent !== 'object') return obj;
+  const result = deepSet(obj, keys.slice(0, -1).join('.'), { ...parent });
+  const lastKey = keys[keys.length - 1];
+  const parentClone = deepGet(result, keys.slice(0, -1).join('.'));
+  if (parentClone && typeof parentClone === 'object') {
+    delete parentClone[lastKey];
+  }
+  return result;
+}
+
+// ==================== Model Catalog ====================
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  provider: 'anthropic' | 'deepseek';
+  subagentModel?: string;
+}
+
+export const ALL_MODELS: ModelOption[] = [
+  { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', provider: 'anthropic', subagentModel: 'claude-3-5-haiku-20241022' },
+  { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', provider: 'anthropic', subagentModel: 'claude-3-5-haiku-20241022' },
+  { id: 'claude-opus-4-20250514', label: 'Claude Opus 4', provider: 'anthropic', subagentModel: 'claude-3-5-haiku-20241022' },
+  { id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', provider: 'anthropic' },
+  { id: 'deepseek-v4-pro[1m]', label: 'DeepSeek V4 Pro (1M)', provider: 'deepseek', subagentModel: 'deepseek-v4-flash' },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', provider: 'deepseek', subagentModel: 'deepseek-v4-flash' },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', provider: 'deepseek' },
+  { id: 'deepseek-r1', label: 'DeepSeek R1', provider: 'deepseek', subagentModel: 'deepseek-v4-flash' },
+  { id: 'deepseek-v3', label: 'DeepSeek V3', provider: 'deepseek', subagentModel: 'deepseek-v4-flash' },
+];
+
+export interface AutoTitleTier {
+  upTo: number;
+  every: number;
+}
+
+export const DEFAULT_AUTO_TITLE_TIERS: AutoTitleTier[] = [
+  { upTo: 20, every: 5 },
+  { upTo: 200, every: 25 },
+];
+
+// ==================== API helpers ====================
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function debouncedSave(settings: Record<string, string>) {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    }).catch(() => {});
+  }, 300);
+}
+
+export async function loadSettingsFromDb(): Promise<Record<string, string>> {
+  try {
+    const res = await fetch('/api/settings');
+    if (res.ok) return await res.json();
+  } catch {}
+  // Fallback: migrate from localStorage (one-time)
+  const legacy: Record<string, string> = {};
+  const anthropic = localStorage.getItem('cc-gui-settings-anthropicKey');
+  const deepseek = localStorage.getItem('cc-gui-settings-deepseekKey');
+  const baseUrl = localStorage.getItem('cc-gui-settings-deepseekBaseUrl');
+  const activity = localStorage.getItem('cc-gui-settings-showActivity');
+  if (anthropic) legacy.anthropicApiKey = anthropic;
+  if (deepseek) legacy.deepseekApiKey = deepseek;
+  if (baseUrl) legacy.deepseekBaseUrl = baseUrl;
+  if (activity) legacy.showActivity = activity;
+  // Also try legacy Zustand persist key
+  try {
+    const raw = localStorage.getItem('cc-gui-settings');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.state) Object.assign(legacy, {
+        anthropicApiKey: parsed.state.anthropicApiKey || legacy.anthropicApiKey || '',
+        deepseekApiKey: parsed.state.deepseekApiKey || legacy.deepseekApiKey || '',
+        deepseekBaseUrl: parsed.state.deepseekBaseUrl || legacy.deepseekBaseUrl || '',
+        showActivity: String(parsed.state.showActivity ?? legacy.showActivity ?? 'true'),
+      });
+    }
+  } catch {}
+  // Save migrated data to DB
+  if (Object.keys(legacy).length > 0) {
+    debouncedSave(legacy);
+  }
+  return legacy;
+}
+
+// ==================== Store ====================
+
+interface SettingsState {
+  anthropicApiKey: string;
+  deepseekApiKey: string;
+  deepseekBaseUrl: string;
+  showActivity: boolean;
+  autoTitleEnabled: boolean;
+  autoTitleTiers: AutoTitleTier[];
+  loaded: boolean;
+
+  // Azure DevOps
+  azureDevopsOrgUrl: string;
+  azureDevopsPat: string;
+  azureDevopsProject: string;
+  azureDevopsRepository: string;
+  azureDevopsConnected: boolean;
+  azureDevopsConnectionError: string | null;
+  azureDevopsUserName: string;
+  azureDevopsUserId: string;
+
+  // Claude Code settings
+  claudeSettings: Record<string, any>;
+  claudeSettingsLoaded: boolean;
+
+  setAnthropicApiKey: (key: string) => void;
+  setDeepseekApiKey: (key: string) => void;
+  setDeepseekBaseUrl: (url: string) => void;
+  setShowActivity: (show: boolean) => void;
+  setAutoTitleEnabled: (enabled: boolean) => void;
+  setAutoTitleTiers: (tiers: AutoTitleTier[]) => void;
+  loadFromDb: () => Promise<void>;
+
+  // Azure DevOps settings
+  setAzureDevopsOrgUrl: (url: string) => void;
+  setAzureDevopsPat: (pat: string) => void;
+  setAzureDevopsProject: (project: string) => void;
+  setAzureDevopsRepository: (repo: string) => void;
+  connectAzureDevops: () => Promise<boolean>;
+  disconnectAzureDevops: () => void;
+
+  // Claude Code settings actions
+  loadClaudeSettings: () => Promise<void>;
+  saveClaudeSetting: (key: string, value: any) => Promise<void>;
+  getClaudeSetting: (key: string) => any;
+  resetClaudeSetting: (key: string) => Promise<void>;
+
+  getEnvVarsForModel: (modelId: string) => Record<string, string>;
+  hasKey: (provider: 'anthropic' | 'deepseek') => boolean;
+  getAvailableModels: () => ModelOption[];
+}
+
+export const useSettingsStore = create<SettingsState>()((set, get) => ({
+  anthropicApiKey: '',
+  deepseekApiKey: '',
+  deepseekBaseUrl: 'https://api.deepseek.com/anthropic',
+  showActivity: true,
+  autoTitleEnabled: true,
+  autoTitleTiers: [...DEFAULT_AUTO_TITLE_TIERS],
+  loaded: false,
+
+  azureDevopsOrgUrl: '',
+  azureDevopsPat: '',
+  azureDevopsProject: '',
+  azureDevopsRepository: '',
+  azureDevopsConnected: false,
+  azureDevopsConnectionError: null,
+  azureDevopsUserName: '',
+  azureDevopsUserId: '',
+
+  claudeSettings: {},
+  claudeSettingsLoaded: false,
+
+  loadClaudeSettings: async () => {
+    try {
+      const res = await fetch('/api/claude-settings');
+      if (res.ok) {
+        const data = await res.json();
+        set({ claudeSettings: data, claudeSettingsLoaded: true });
+      }
+    } catch { /* Claude Code may not be installed */ }
+  },
+
+  saveClaudeSetting: async (key, value) => {
+    const current = get().claudeSettings;
+    // Build the delta to send
+    const delta: Record<string, any> = {};
+    const keys = key.split('.');
+    if (keys.length === 1) {
+      delta[key] = value;
+    } else {
+      let d = delta;
+      for (let i = 0; i < keys.length - 1; i++) {
+        d[keys[i]] = {};
+        d = d[keys[i]];
+      }
+      d[keys[keys.length - 1]] = value;
+    }
+
+    // Optimistic local update
+    const next = deepSet(current, key, value);
+    set({ claudeSettings: next });
+
+    try {
+      await fetch('/api/claude-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(delta),
+      });
+    } catch { /* ignore */ }
+  },
+
+  getClaudeSetting: (key) => {
+    const val = deepGet(get().claudeSettings, key);
+    if (val !== undefined) return val;
+    return CLAUDE_SETTING_DEFAULTS[key];
+  },
+
+  resetClaudeSetting: async (key) => {
+    const current = get().claudeSettings;
+    const next = deepDelete(current, key);
+    set({ claudeSettings: next });
+
+    // Send null to delete
+    const delta: Record<string, any> = {};
+    const keys = key.split('.');
+    if (keys.length === 1) {
+      delta[key] = null;
+    } else {
+      let d = delta;
+      for (let i = 0; i < keys.length - 1; i++) {
+        d[keys[i]] = {};
+        d = d[keys[i]];
+      }
+      d[keys[keys.length - 1]] = null;
+    }
+
+    try {
+      await fetch('/api/claude-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(delta),
+      });
+    } catch { /* ignore */ }
+  },
+
+  setAnthropicApiKey: (key) => {
+    set({ anthropicApiKey: key });
+    debouncedSave(toSettings(get()));
+  },
+  setDeepseekApiKey: (key) => {
+    set({ deepseekApiKey: key });
+    debouncedSave(toSettings(get()));
+  },
+  setDeepseekBaseUrl: (url) => {
+    set({ deepseekBaseUrl: url });
+    debouncedSave(toSettings(get()));
+  },
+  setShowActivity: (show) => {
+    set({ showActivity: show });
+    debouncedSave(toSettings(get()));
+  },
+
+  setAutoTitleEnabled: (enabled) => {
+    set({ autoTitleEnabled: enabled });
+    debouncedSave(toSettings(get()));
+  },
+
+  setAutoTitleTiers: (tiers) => {
+    set({ autoTitleTiers: tiers });
+    debouncedSave(toSettings(get()));
+  },
+
+  loadFromDb: async () => {
+    const data = await loadSettingsFromDb();
+    set({
+      anthropicApiKey: data.anthropicApiKey || '',
+      deepseekApiKey: data.deepseekApiKey || '',
+      deepseekBaseUrl: data.deepseekBaseUrl || 'https://api.deepseek.com/anthropic',
+      showActivity: data.showActivity !== 'false',
+      autoTitleEnabled: data.autoTitleEnabled !== 'false',
+      autoTitleTiers: (() => {
+        try { const p = JSON.parse(data.autoTitleTiers || 'null'); return Array.isArray(p) ? p : null; } catch { return null; }
+      })() || [...DEFAULT_AUTO_TITLE_TIERS],
+      azureDevopsOrgUrl: data.azureDevopsOrgUrl || '',
+      azureDevopsPat: data.azureDevopsPat || '',
+      azureDevopsProject: data.azureDevopsProject || '',
+      azureDevopsRepository: data.azureDevopsRepository || '',
+      azureDevopsUserName: data.azureDevopsUserName || '',
+      azureDevopsUserId: data.azureDevopsUserId || '',
+      loaded: true,
+    });
+  },
+
+  getEnvVarsForModel: (modelId) => {
+    const s = get();
+    const model = ALL_MODELS.find(m => m.id === modelId);
+    const subModel = model?.subagentModel || 'claude-3-5-haiku-20241022';
+
+    // Read effort from Claude settings env, or default for DeepSeek
+    const effort = s.claudeSettings?.env?.CLAUDE_CODE_EFFORT_LEVEL;
+
+    if (model?.provider === 'deepseek') {
+      return {
+        ANTHROPIC_BASE_URL: s.deepseekBaseUrl || 'https://api.deepseek.com/anthropic',
+        ANTHROPIC_API_KEY: s.deepseekApiKey,
+        ANTHROPIC_MODEL: modelId,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: modelId,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: subModel,
+        CLAUDE_CODE_SUBAGENT_MODEL: subModel,
+        CLAUDE_CODE_EFFORT_LEVEL: effort || 'max',
+      };
+    }
+    const env: Record<string, string> = {};
+    if (s.anthropicApiKey) env.ANTHROPIC_API_KEY = s.anthropicApiKey;
+    if (effort) env.CLAUDE_CODE_EFFORT_LEVEL = effort;
+    return env;
+  },
+
+  hasKey: (provider) => {
+    const s = get();
+    return provider === 'anthropic' ? !!s.anthropicApiKey : !!s.deepseekApiKey;
+  },
+
+  getAvailableModels: () => {
+    const s = get();
+    return ALL_MODELS.filter(m => s.hasKey(m.provider));
+  },
+
+  // ── Azure DevOps ──
+
+  setAzureDevopsOrgUrl: (url) => {
+    set({ azureDevopsOrgUrl: url });
+    debouncedSave(toSettings(get()));
+  },
+  setAzureDevopsPat: (pat) => {
+    set({ azureDevopsPat: pat });
+    debouncedSave(toSettings(get()));
+  },
+  setAzureDevopsProject: (project) => {
+    set({ azureDevopsProject: project });
+    debouncedSave(toSettings(get()));
+  },
+  setAzureDevopsRepository: (repo) => {
+    set({ azureDevopsRepository: repo });
+    debouncedSave(toSettings(get()));
+  },
+
+  connectAzureDevops: async () => {
+    const s = get();
+    if (!s.azureDevopsOrgUrl || !s.azureDevopsPat) {
+      set({ azureDevopsConnected: false, azureDevopsConnectionError: 'Please provide org URL and PAT' });
+      return false;
+    }
+    try {
+      const res = await fetch('/api/azure-devops/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgUrl: s.azureDevopsOrgUrl, pat: s.azureDevopsPat }),
+      });
+      const data = await res.json();
+      const connected = data.connected === true;
+      const userName = data.user?.name || '';
+      const userId = data.user?.id || '';
+      set({
+        azureDevopsConnected: connected,
+        azureDevopsConnectionError: data.error || null,
+        azureDevopsUserName: userName,
+        azureDevopsUserId: userId,
+      });
+      return connected;
+    } catch (err: any) {
+      set({ azureDevopsConnected: false, azureDevopsConnectionError: err.message });
+      return false;
+    }
+  },
+
+  disconnectAzureDevops: () => {
+    fetch('/api/azure-devops/disconnect', { method: 'POST' }).catch(() => {});
+    set({ azureDevopsConnected: false, azureDevopsConnectionError: null });
+  },
+}));
+
+function toSettings(s: SettingsState): Record<string, string> {
+  return {
+    anthropicApiKey: s.anthropicApiKey,
+    deepseekApiKey: s.deepseekApiKey,
+    deepseekBaseUrl: s.deepseekBaseUrl,
+    showActivity: String(s.showActivity),
+    autoTitleEnabled: String(s.autoTitleEnabled),
+    autoTitleTiers: JSON.stringify(s.autoTitleTiers),
+    azureDevopsOrgUrl: s.azureDevopsOrgUrl,
+    azureDevopsPat: s.azureDevopsPat,
+    azureDevopsProject: s.azureDevopsProject,
+    azureDevopsRepository: s.azureDevopsRepository,
+  };
+}

@@ -1,0 +1,9 @@
+{
+  "name": "cc-gui",
+  "private": true,
+  "workspaces": [
+    "packages/backend",
+    "packages/frontend",
+    "packages/shared"
+  ]
+}
