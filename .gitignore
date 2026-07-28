@@ -7,3 +7,4 @@ logs/
 .pricing-cache.json
 .reasonix/
 test-out.txt
+.worktrees/
