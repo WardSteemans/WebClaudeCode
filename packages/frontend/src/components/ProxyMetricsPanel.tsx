@@ -34,6 +34,7 @@ export function ProxyMetricsPanel() {
   if (!visible) return null;
 
   const latest = metrics[0];
+  const lastError = metrics.find(m => m.statusCode >= 400 || m.error);
   const directCount = metrics.filter(m => m.routing === 'direct').length;
   const visionCount = metrics.filter(m => m.routing === 'vision').length;
   const errorCount = metrics.filter(m => m.routing === 'error' || m.statusCode >= 400).length;
@@ -61,6 +62,14 @@ export function ProxyMetricsPanel() {
             </button>
           </div>
 
+          {/* Persistent error banner */}
+          {lastError && (
+            <div className="px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-[10px] text-red-400">
+              <span className="font-medium">Last error:</span> {lastError.error || `${lastError.statusCode} ${lastError.routing}`}
+              <span className="text-red-400/50 ml-2">{new Date(lastError.timestamp).toLocaleTimeString()}</span>
+            </div>
+          )}
+
           {/* Summary bar */}
           <div className="flex gap-3 px-3 py-2 text-[10px] border-b border-[var(--color-border)]/50">
             <span className="text-[var(--color-text-muted)]">
@@ -83,15 +92,20 @@ export function ProxyMetricsPanel() {
           <div className="flex-1 overflow-y-auto">
             {metrics.slice(0, 15).map((m) => {
               const style = ROUTING_LABELS[m.routing];
+              const isError = m.statusCode >= 400 || m.error;
               return (
                 <div
                   key={m.id}
-                  className="px-3 py-1.5 border-b border-[var(--color-border)]/30 hover:bg-[var(--color-surface-hover)]/50 transition-colors"
+                  className={`px-3 py-1.5 border-b border-[var(--color-border)]/30 transition-colors ${
+                    isError
+                      ? 'bg-red-500/5 hover:bg-red-500/10 border-red-500/20'
+                      : 'hover:bg-[var(--color-surface-hover)]/50'
+                  }`}
                 >
                   <div className="flex items-center gap-2">
                     <span className={style.color}>{style.icon}</span>
                     <span className={`text-[10px] font-medium ${style.color}`}>{style.label}</span>
-                    <span className="text-[10px] text-[var(--color-text-muted)] ml-auto">
+                    <span className={`text-[10px] ml-auto ${isError ? 'text-red-400 font-medium' : 'text-[var(--color-text-muted)]'}`}>
                       {m.statusCode} · {m.totalMs}ms
                     </span>
                   </div>
@@ -102,7 +116,7 @@ export function ProxyMetricsPanel() {
                     <span>· {(m.bodySize / 1024).toFixed(0)}KB</span>
                   </div>
                   {m.error && (
-                    <div className="text-[9px] text-red-400 mt-0.5 truncate">{m.error}</div>
+                    <div className="text-[9px] text-red-400 mt-1 font-medium break-all">{m.error}</div>
                   )}
                 </div>
               );
