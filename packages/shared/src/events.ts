@@ -339,3 +339,24 @@ export interface ProxyMetric {
   imageCount: number;
   error?: string;
 }
+
+// ==================== API Router Rules ====================
+
+export interface RoutingRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** What to match in the parsed request body or extracted metadata */
+  condition: {
+    /** 'hasImages' | 'model' | 'content' | 'tokens' */
+    field: string;
+    operator: 'equals' | 'contains' | 'startsWith' | 'gt' | 'lt' | 'regex';
+    value: string;
+  };
+  /** What to do when the condition matches */
+  action: {
+    /** 'setModel' | 'forceVision' | 'skipVision' */
+    type: string;
+    value?: string;
+  };
+}

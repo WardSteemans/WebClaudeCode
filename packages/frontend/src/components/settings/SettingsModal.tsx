@@ -1,19 +1,21 @@
 import { useState } from 'react';
-import { X, Plus, Eye, EyeOff, Key, Activity, Globe, ChevronRight, Sliders, Cloud, Link2 } from 'lucide-react';
+import { X, Plus, Eye, EyeOff, Key, Activity, Globe, ChevronRight, Sliders, Cloud, Link2, ArrowRight } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { ClaudeSettingsPage } from './ClaudeSettingsPage';
+import { RoutingRulesSettings } from './RoutingRulesSettings';
 
 interface SettingsModalProps {
   onClose: () => void;
 }
 
-type SettingsPage = 'api-keys' | 'display' | 'claude' | 'azure-devops';
+type SettingsPage = 'api-keys' | 'display' | 'claude' | 'azure-devops' | 'routing';
 
 const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode }[] = [
   { id: 'api-keys', label: 'API Keys', icon: <Key size={15} /> },
   { id: 'display', label: 'Display', icon: <Activity size={15} /> },
   { id: 'claude', label: 'Claude Code', icon: <Sliders size={15} /> },
   { id: 'azure-devops', label: 'Azure DevOps', icon: <Cloud size={15} /> },
+  { id: 'routing', label: 'Routing Rules', icon: <ArrowRight size={15} /> },
 ];
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
@@ -62,6 +64,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             {page === 'display' && <DisplayPage />}
             {page === 'claude' && <ClaudeSettingsPage />}
             {page === 'azure-devops' && <AzureDevOpsSettingsPage />}
+            {page === 'routing' && <RoutingRulesSettings />}
           </div>
 
           <div className="px-4 py-2.5 border-t border-[var(--color-border)] shrink-0 bg-[var(--color-bg)]/50 flex justify-between items-center">

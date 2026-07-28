@@ -323,6 +323,119 @@ function forwardToUpstream(
   upstreamReq.end();
 }
 
+// ── Routing Rules Engine ──
+
+import type { RoutingRule } from '@cc-gui/shared';
+
+let rulesCache: RoutingRule[] | null = null;
+let rulesCacheAt = 0;
+const RULES_CACHE_TTL = 10_000;
+
+function loadRules(): RoutingRule[] {
+  const now = Date.now();
+  if (rulesCache && (now - rulesCacheAt) < RULES_CACHE_TTL) return rulesCache;
+
+  try {
+    const settings = getSettings();
+    const raw = settings.routingRules;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        rulesCache = parsed as RoutingRule[];
+        rulesCacheAt = now;
+        return rulesCache;
+      }
+    }
+  } catch { /* invalid JSON, ignore */ }
+  rulesCache = [];
+  rulesCacheAt = now;
+  return rulesCache;
+}
+
+export function getRoutingRules(): RoutingRule[] {
+  return loadRules();
+}
+
+function evaluateCondition(condition: RoutingRule['condition'], parsed: JsonValue): boolean {
+  const { field, operator, value } = condition;
+  let actual: string | boolean | number = '';
+
+  switch (field) {
+    case 'hasImages':
+      actual = hasImages(parsed);
+      break;
+    case 'model':
+      actual = extractModel(parsed);
+      break;
+    case 'content': {
+      // Extract all text content from messages
+      const parts: string[] = [];
+      const collect = (obj: unknown) => {
+        if (!obj || typeof obj !== 'object') return;
+        if (Array.isArray(obj)) { obj.forEach(collect); return; }
+        const r = obj as Record<string, unknown>;
+        if (r.type === 'text' && typeof r.text === 'string') parts.push(r.text);
+        Object.values(r).forEach(collect);
+      };
+      collect(parsed);
+      actual = parts.join(' ');
+      break;
+    }
+    default:
+      return false;
+  }
+
+  switch (operator) {
+    case 'equals':   return String(actual) === value || actual === (value === 'true' ? true : value === 'false' ? false : value);
+    case 'contains': return String(actual).toLowerCase().includes(value.toLowerCase());
+    case 'startsWith': return String(actual).toLowerCase().startsWith(value.toLowerCase());
+    case 'gt':       return Number(actual) > Number(value);
+    case 'lt':       return Number(actual) < Number(value);
+    case 'regex':
+      try { return new RegExp(value, 'i').test(String(actual)); } catch { return false; }
+    default: return false;
+  }
+}
+
+export interface RuleActionResult {
+  forceVision: boolean;
+  skipVision: boolean;
+  overrideModel: string | null;
+}
+
+function applyRules(parsed: JsonValue): RuleActionResult {
+  const result: RuleActionResult = { forceVision: false, skipVision: false, overrideModel: null };
+  const rules = loadRules();
+
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+
+    try {
+      if (evaluateCondition(rule.condition, parsed)) {
+        log.info('routing rule matched', { rule: rule.name });
+
+        switch (rule.action.type) {
+          case 'forceVision':
+            result.forceVision = true;
+            break;
+          case 'skipVision':
+            result.skipVision = true;
+            break;
+          case 'setModel':
+            if (rule.action.value) {
+              result.overrideModel = rule.action.value;
+            }
+            break;
+        }
+      }
+    } catch (err) {
+      log.warn('rule evaluation failed', { rule: rule.name, error: String(err) });
+    }
+  }
+
+  return result;
+}
+
 // ── Express request handler ──
 
 export async function handleProxyRequest(req: Request, res: Response): Promise<void> {
@@ -352,11 +465,17 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
     return;
   }
 
-  // No images → forward directly
-  if (!hasImages(parsed)) {
+  // ── Evaluate routing rules ──
+  const ruleResult = applyRules(parsed);
+  const effectiveModel = ruleResult.overrideModel || model;
+  const hasImg = hasImages(parsed);
+  const shouldUseVision = (hasImg && !ruleResult.skipVision) || ruleResult.forceVision;
+
+  // No images and no rule-triggered vision → forward directly
+  if (!shouldUseVision) {
     forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs) => {
       recordMetric({
-        routing: 'direct', provider, model, statusCode,
+        routing: 'direct', provider, model: effectiveModel, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: 0,
       });
     });
@@ -364,8 +483,8 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
   }
 
   // ── Vision flow ──
-  const images = extractImages(parsed);
-  log.info('image detected — routing through vision', { imageCount: images.length });
+  const images = hasImg ? extractImages(parsed) : [];
+  log.info('vision routing triggered', { hasImg, forceVision: ruleResult.forceVision, imageCount: images.length });
 
   // No Anthropic key → strip and forward
   if (!cfg.anthropicApiKey) {
