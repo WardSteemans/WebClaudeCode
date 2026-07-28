@@ -1,5 +1,5 @@
-import * as http from 'http';
 import * as https from 'https';
+import type { Request, Response } from 'express';
 import { getSettings } from '../data/db.js';
 import { createLogger } from '../logger.js';
 
@@ -25,7 +25,6 @@ interface JsonArray extends Array<JsonValue> {}
 
 // ── State ──
 
-let server: http.Server | null = null;
 let config: UpstreamConfig | null = null;
 let configLoadedAt = 0;
 const CONFIG_TTL_MS = 5000;
@@ -37,44 +36,22 @@ function loadConfig(): UpstreamConfig | null {
   if (config && (now - configLoadedAt) < CONFIG_TTL_MS) return config;
 
   const settings = getSettings();
-  const deepseekBaseUrl = settings.deepseekBaseUrl || 'https://api.deepseek.com/anthropic';
   const deepseekApiKey = settings.deepseekApiKey;
-  const anthropicApiKey = settings.anthropicApiKey;
+  const deepseekBaseUrl = settings.deepseekBaseUrl || 'https://api.deepseek.com/anthropic';
 
   if (!deepseekApiKey) {
-    log.warn('DeepSeek API key not configured — API router disabled');
+    log.warn('DeepSeek API key not configured');
     return null;
   }
 
   config = {
     deepseekBaseUrl: deepseekBaseUrl.replace(/\/+$/, ''),
     deepseekApiKey,
-    anthropicApiKey: anthropicApiKey || '',
+    anthropicApiKey: settings.anthropicApiKey || '',
     visionModel: settings.visionModel || 'claude-3-5-haiku-20241022',
   };
   configLoadedAt = now;
   return config;
-}
-
-// ── Body reading ──
-
-function readBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-
-    req.on('data', (chunk: Buffer) => {
-      total += chunk.length;
-      if (total > maxBytes) {
-        req.destroy();
-        reject(new Error('Payload too large'));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-    req.on('error', reject);
-  });
 }
 
 // ── Image detection ──
@@ -110,7 +87,12 @@ function _collectImages(obj: unknown, out: ImageBlock[]): void {
 // ── Request rewriting ──
 
 export function rewriteBody(body: unknown, description: string): unknown {
-  return _replaceImages(structuredClone(body) as JsonValue, description);
+  try {
+    return _replaceImages(structuredClone(body) as JsonValue, description);
+  } catch {
+    log.warn('structuredClone failed during rewrite — returning original');
+    return body;
+  }
 }
 
 function _replaceImages(obj: JsonValue, description: string): JsonValue {
@@ -136,7 +118,12 @@ function _replaceImages(obj: JsonValue, description: string): JsonValue {
 }
 
 export function stripImages(body: unknown): unknown {
-  return _stripImages(structuredClone(body) as JsonValue);
+  try {
+    return _stripImages(structuredClone(body) as JsonValue);
+  } catch {
+    log.warn('structuredClone failed during strip — returning original');
+    return body;
+  }
 }
 
 function _stripImages(obj: JsonValue): JsonValue {
@@ -157,6 +144,26 @@ function _stripImages(obj: JsonValue): JsonValue {
     if (cleaned !== null) {
       result[key] = cleaned;
     }
+  }
+  return result;
+}
+
+/**
+ * After stripping images, ensure no content array is left empty
+ * (which would be rejected by LLM APIs).
+ */
+function ensureNonEmptyContent(obj: unknown, fallbackText: string): unknown {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return (obj as unknown[]).map(item => ensureNonEmptyContent(item, fallbackText));
+
+  const record = obj as Record<string, unknown>;
+  if (Array.isArray(record.content) && record.content.length === 0) {
+    return { ...record, content: [{ type: 'text', text: fallbackText }] };
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    result[key] = ensureNonEmptyContent(value, fallbackText);
   }
   return result;
 }
@@ -238,11 +245,11 @@ function forwardToUpstream(
   targetBaseUrl: string,
   apiKey: string,
   body: string,
-  cliRes: http.ServerResponse,
+  res: Response,
 ): void {
   const url = new URL('/v1/messages', targetBaseUrl);
 
-  const options: https.RequestOptions = {
+  const upstreamReq = https.request({
     hostname: url.hostname,
     port: url.port || 443,
     path: url.pathname,
@@ -254,34 +261,28 @@ function forwardToUpstream(
       'content-length': Buffer.byteLength(body),
     },
     timeout: 300_000,
-  };
-
-  log.info('forwarding to upstream', { target: targetBaseUrl, bodySize: body.length });
-
-  const upstreamReq = https.request(options, (upstreamRes) => {
-    cliRes.writeHead(upstreamRes.statusCode || 200, upstreamRes.headers);
-    upstreamRes.pipe(cliRes);
+  }, (upstreamRes) => {
+    res.writeHead(upstreamRes.statusCode || 200, upstreamRes.headers);
+    upstreamRes.pipe(res);
   });
 
   upstreamReq.on('error', (err) => {
     log.error('upstream request failed', err);
-    if (!cliRes.headersSent) {
-      cliRes.writeHead(502, { 'content-type': 'application/json' });
-      cliRes.end(JSON.stringify({
+    if (!res.headersSent) {
+      res.status(502).json({
         type: 'error',
         error: { type: 'api_error', message: `Upstream unavailable: ${err.message}` },
-      }));
+      });
     }
   });
 
   upstreamReq.on('timeout', () => {
     upstreamReq.destroy();
-    if (!cliRes.headersSent) {
-      cliRes.writeHead(504, { 'content-type': 'application/json' });
-      cliRes.end(JSON.stringify({
+    if (!res.headersSent) {
+      res.status(504).json({
         type: 'error',
         error: { type: 'timeout', message: 'Upstream request timed out' },
-      }));
+      });
     }
   });
 
@@ -289,53 +290,39 @@ function forwardToUpstream(
   upstreamReq.end();
 }
 
-// ── Request handler ──
+// ── Express request handler ──
 
-async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  // Only handle POST /v1/messages
-  if (req.method !== 'POST' || !req.url?.startsWith('/v1/messages')) {
-    res.writeHead(404, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
+export async function handleProxyRequest(req: Request, res: Response): Promise<void> {
+  // Validate body
+  const raw = req.body;
+  if (!raw || (Buffer.isBuffer(raw) && raw.length === 0)) {
+    res.status(400).json({ error: 'Empty body' });
     return;
   }
 
-  // Read body first (validate before config check)
-  let body: string;
-  try {
-    body = await readBody(req, 10 * 1024 * 1024);
-  } catch {
-    res.writeHead(413, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Payload too large' }));
-    return;
-  }
-
-  if (!body.trim()) {
-    res.writeHead(400, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Empty body' }));
-    return;
-  }
-
-  const cfg = loadConfig();
-  if (!cfg) {
-    res.writeHead(503, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({
-      type: 'error',
-      error: { type: 'configuration', message: 'API router not configured — DeepSeek API key required' },
-    }));
-    return;
-  }
+  const body = Buffer.isBuffer(raw) ? raw.toString('utf-8') : String(raw);
 
   // Parse JSON
   let parsed: JsonValue;
   try {
     parsed = JSON.parse(body);
   } catch {
-    // Not valid JSON — forward as-is
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res);
+    // Not valid JSON — forward as-is to DeepSeek (or fail gracefully)
+    res.status(400).json({ error: 'Invalid JSON body' });
     return;
   }
 
-  // Check for images
+  // Load upstream config — if no DeepSeek key at all, we can't do anything
+  const cfg = loadConfig();
+  if (!cfg) {
+    res.status(503).json({
+      type: 'error',
+      error: { type: 'configuration', message: 'DeepSeek API key required' },
+    });
+    return;
+  }
+
+  // No images → forward directly
   if (!hasImages(parsed)) {
     forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res);
     return;
@@ -344,6 +331,17 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   // ── Vision flow ──
   log.info('image detected — routing through vision');
 
+  // If no Anthropic key, fall through to forwarding without vision
+  if (!cfg.anthropicApiKey) {
+    log.warn('no Anthropic key — forwarding without vision processing');
+    const cleaned = ensureNonEmptyContent(
+      stripImages(parsed),
+      '[Image(s) removed — no vision API key configured]',
+    );
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res);
+    return;
+  }
+
   const images = extractImages(parsed);
   try {
     const description = await callVisionAPI(cfg, images);
@@ -351,68 +349,17 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(rewritten), res);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Vision processing failed';
-    log.warn('vision failed, forwarding without images', { error: message, imageCount: images.length });
+    log.warn('vision failed, stripping images and forwarding', { error: message, imageCount: images.length });
 
     try {
-      const cleaned = stripImages(parsed);
-      // Add a note so the model knows images were present
-      if (cleaned && typeof cleaned === 'object' && 'messages' in cleaned) {
-        const msgs = (cleaned as JsonObject).messages as JsonArray;
-        if (msgs && msgs.length > 0) {
-          const last = msgs[msgs.length - 1] as JsonObject;
-          if (last.content) {
-            if (Array.isArray(last.content)) {
-              (last.content as JsonArray).push({
-                type: 'text',
-                text: `[Note: ${images.length} image(s) could not be processed automatically. ${message}]`,
-              } as unknown as JsonValue);
-            }
-          }
-        }
-      }
+      const cleaned = ensureNonEmptyContent(
+        stripImages(parsed),
+        `[${images.length} image(s) could not be processed: ${message}]`,
+      );
       forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res);
     } catch {
-      // Last resort: forward original body
+      // Last resort: forward original body — upstream may reject it but at least we tried
       forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res);
     }
-  }
-}
-
-// ── Lifecycle ──
-
-export function startApiRouter(preferredPort = 9000): http.Server {
-  if (server) return server;
-
-  server = http.createServer(handleRequest);
-  server.timeout = 300_000;
-
-  server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') {
-      log.warn(`port ${preferredPort} in use, trying ${preferredPort + 1}`);
-      server?.close();
-      server = null;
-      startApiRouter(preferredPort + 1);
-      return;
-    }
-    log.error('API router fatal error', err);
-  });
-
-  server.listen(preferredPort, () => {
-    log.info(`API router started`, { port: preferredPort });
-    console.log(`API router listening on http://localhost:${preferredPort}`);
-  });
-
-  return server;
-}
-
-export function getApiRouterPort(): number {
-  return (server?.address() as { port: number })?.port || 0;
-}
-
-export function stopApiRouter(): void {
-  if (server) {
-    server.close();
-    server = null;
-    log.info('API router stopped');
   }
 }

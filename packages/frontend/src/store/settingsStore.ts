@@ -74,6 +74,7 @@ interface SettingsState {
   anthropicApiKey: string;
   deepseekApiKey: string;
   deepseekBaseUrl: string;
+  apiProxyUrl: string;
   showActivity: boolean;
   autoTitleEnabled: boolean;
   autoTitleTiers: AutoTitleTier[];
@@ -96,6 +97,7 @@ interface SettingsState {
   setAnthropicApiKey: (key: string) => void;
   setDeepseekApiKey: (key: string) => void;
   setDeepseekBaseUrl: (url: string) => void;
+  setApiProxyUrl: (url: string) => void;
   setShowActivity: (show: boolean) => void;
   setAutoTitleEnabled: (enabled: boolean) => void;
   setAutoTitleTiers: (tiers: AutoTitleTier[]) => void;
@@ -124,6 +126,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   anthropicApiKey: '',
   deepseekApiKey: '',
   deepseekBaseUrl: 'https://api.deepseek.com/anthropic',
+  apiProxyUrl: '',
   showActivity: true,
   autoTitleEnabled: true,
   autoTitleTiers: [...DEFAULT_AUTO_TITLE_TIERS],
@@ -226,6 +229,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     set({ deepseekBaseUrl: url });
     debouncedSave(toSettings(get()));
   },
+  setApiProxyUrl: (url) => {
+    set({ apiProxyUrl: url });
+    debouncedSave(toSettings(get()));
+  },
   setShowActivity: (show) => {
     set({ showActivity: show });
     debouncedSave(toSettings(get()));
@@ -247,6 +254,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       anthropicApiKey: data.anthropicApiKey || '',
       deepseekApiKey: data.deepseekApiKey || '',
       deepseekBaseUrl: data.deepseekBaseUrl || 'https://api.deepseek.com/anthropic',
+      apiProxyUrl: data.apiProxyUrl || '',
       showActivity: data.showActivity !== 'false',
       autoTitleEnabled: data.autoTitleEnabled !== 'false',
       autoTitleTiers: (() => {
@@ -271,8 +279,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const effort = s.claudeSettings?.env?.CLAUDE_CODE_EFFORT_LEVEL;
 
     if (model?.provider === 'deepseek') {
+      // Route through our built-in proxy for automatic image→vision processing.
+      // Default assumes backend on localhost:3001. Override via apiProxyUrl setting.
+      const proxyUrl = s.apiProxyUrl || 'http://localhost:3001/api/proxy';
       return {
-        ANTHROPIC_BASE_URL: 'http://localhost:9000',
+        ANTHROPIC_BASE_URL: proxyUrl,
         ANTHROPIC_API_KEY: s.deepseekApiKey,
         ANTHROPIC_MODEL: modelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,
@@ -357,6 +368,7 @@ function toSettings(s: SettingsState): Record<string, string> {
     anthropicApiKey: s.anthropicApiKey,
     deepseekApiKey: s.deepseekApiKey,
     deepseekBaseUrl: s.deepseekBaseUrl,
+    apiProxyUrl: s.apiProxyUrl,
     showActivity: String(s.showActivity),
     autoTitleEnabled: String(s.autoTitleEnabled),
     autoTitleTiers: JSON.stringify(s.autoTitleTiers),

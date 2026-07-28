@@ -1,27 +1,41 @@
-import { startApiRouter, stopApiRouter } from './services/api-router.js';
+import express from 'express';
+import { createServer } from 'http';
 import { initDb } from './data/db.js';
+import { handleProxyRequest } from './services/api-router.js';
 
 (async () => {
   await initDb();
-  startApiRouter(9000);
-  await new Promise(r => setTimeout(r, 300));
+
+  const app = express();
+  app.post('/api/proxy/v1/messages', express.raw({ type: '*/*', limit: '10mb' }), handleProxyRequest);
+
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(9001, resolve));
+  const base = 'http://localhost:9001/api/proxy';
 
   try {
-    const r1 = await fetch('http://localhost:9000/');
-    console.log('GET /             →', r1.status, r1.status === 404 ? '✓' : '✗');
+    // Test 1: GET → 404 (Express handles routing)
+    const r1 = await fetch(base.replace('/api/proxy', '/'));
+    console.log('GET /           →', r1.status, r1.status === 404 ? '✓' : '✗');
 
-    const r2 = await fetch('http://localhost:9000/v1/messages');
-    console.log('GET /v1/messages  →', r2.status, r2.status === 404 ? '✓' : '✗');
-
-    const r3 = await fetch('http://localhost:9000/v1/messages', { method: 'POST' });
-    console.log('POST no body      →', r3.status, r3.status === 400 ? '✓' : '✗');
-
-    const r4 = await fetch('http://localhost:9000/v1/messages', {
-      method: 'POST', body: 'not-json',
+    // Test 2: POST empty body
+    const r2 = await fetch(base + '/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '',
     });
-    console.log('POST bad JSON     →', r4.status, r4.status === 503 ? '✓ (no key)' : '✗');
+    console.log('POST empty body →', r2.status, r2.status === 400 ? '✓' : '✗');
 
-    const r5 = await fetch('http://localhost:9000/v1/messages', {
+    // Test 3: POST invalid JSON
+    const r3 = await fetch(base + '/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'not-json',
+    });
+    console.log('POST bad JSON   →', r3.status, r3.status === 400 ? '✓' : '✗');
+
+    // Test 4: POST valid JSON, no DeepSeek key → 503
+    const r4 = await fetch(base + '/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -30,9 +44,10 @@ import { initDb } from './data/db.js';
         stream: true,
       }),
     });
-    console.log('POST text-only    →', r5.status, r5.status === 503 ? '✓ (no key)' : '✗');
+    console.log('POST text-only  →', r4.status, r4.status === 503 ? '✓ (no key)' : '✗');
+
   } finally {
-    stopApiRouter();
-    console.log('✓ Server lifecycle OK');
+    server.close();
+    console.log('✓ Proxy lifecycle OK');
   }
 })();

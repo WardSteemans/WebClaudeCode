@@ -4,7 +4,7 @@ import { initPricing } from './integrations/pricing.js';
 import { initDb } from './data/db.js';
 import { createLogger } from './logger.js';
 import { setupWebSocket } from './ws/handler.js';
-import { startApiRouter, getApiRouterPort, stopApiRouter } from './services/api-router.js';
+import { handleProxyRequest } from './services/api-router.js';
 import { registerFsRoutes } from './routes/fs.js';
 import { registerGitRoutes } from './routes/git.js';
 import { registerAzureDevOpsRoutes } from './routes/azure-devops.js';
@@ -34,6 +34,13 @@ app.use((req, _res, next) => {
   next();
 });
 
+// ── API Router proxy (mounted on Express — no separate port) ──
+// Claude CLI sends requests to ANTHROPIC_BASE_URL/v1/messages.
+// We set ANTHROPIC_BASE_URL = http://localhost:3001/api/proxy
+// so the CLI hits: POST http://localhost:3001/api/proxy/v1/messages
+// Express raw body parser preserves the exact request for upstream forwarding.
+app.post('/api/proxy/v1/messages', express.raw({ type: '*/*', limit: '10mb' }), handleProxyRequest);
+
 const server = createServer(app);
 
 // ── Route registration ──
@@ -55,19 +62,15 @@ const { sessions } = setupWebSocket(server);
 // ── Health ──
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', activeSessions: sessions.size, apiRouterPort: getApiRouterPort() });
+  res.json({ status: 'ok', activeSessions: sessions.size });
 });
 
 // ----- Start -----
 
 initDb().then(() => initPricing()).then(() => {
-  startApiRouter(9000);
-
   server.listen(PORT, () => {
-    log.info(`Backend running`, { port: PORT, wsPath: '/ws', apiRouterPort: getApiRouterPort() });
+    log.info(`Backend running`, { port: PORT, wsPath: '/ws' });
     console.log(`Backend running on http://localhost:${PORT}`);
-    console.log(`API router on http://localhost:${getApiRouterPort()}`);
     console.log(`WebSocket on ws://localhost:${PORT}/ws`);
   });
 });
-
