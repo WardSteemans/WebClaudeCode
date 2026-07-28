@@ -5,8 +5,8 @@ import type {
   SessionInitEvent, SessionStatusEvent, ThinkingTokensEvent,
   TaskStartedEvent, TaskCompletedEvent, StreamMessageInfoEvent
 } from '@cc-gui/shared';
-import { detectModelTier, calcCost, isSubagentModel } from './pricing';
-import { createLogger } from './logger.js';
+import { detectModelTier, calcCost, isSubagentModel } from '../integrations/pricing';
+import { createLogger } from '../logger.js';
 
 const log = createLogger('eventParser');
 

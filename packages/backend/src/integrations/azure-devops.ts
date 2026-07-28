@@ -1,5 +1,5 @@
 import * as azdev from 'azure-devops-node-api';
-import { createLogger } from './logger.js';
+import { createLogger } from '../logger.js';
 
 const log = createLogger('azure-devops');
 

@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { createLogger } from './logger.js';
+import { createLogger } from '../logger.js';
 
 const log = createLogger('git');
 
