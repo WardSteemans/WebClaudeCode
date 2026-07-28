@@ -20,6 +20,20 @@ const log = createLogger('server');
 const PORT = parseInt(process.env.PORT ?? '', 10) || 3001;
 
 const app = express();
+
+// ── API Router proxy (mounted BEFORE json middleware — needs raw body) ──
+// Claude CLI sends requests to ANTHROPIC_BASE_URL/v1/messages.
+// We set ANTHROPIC_BASE_URL = http://localhost:3001/api/proxy
+// so the CLI hits: POST http://localhost:3001/api/proxy/v1/messages
+// Express raw body parser preserves the exact request for upstream forwarding.
+app.post('/api/proxy/v1/messages', express.raw({ type: '*/*', limit: '10mb' }), handleProxyRequest);
+
+// ── API Router metrics ──
+app.get('/api/proxy/metrics', (_req, res) => {
+  const limit = Math.min(Math.max(parseInt(String(_req.query.limit || '50'), 10) || 50, 1), 500);
+  res.json(getMetrics(limit));
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 // ── Request logging middleware ──
@@ -32,19 +46,6 @@ app.use((req, _res, next) => {
     });
   }
   next();
-});
-
-// ── API Router proxy (mounted on Express — no separate port) ──
-// Claude CLI sends requests to ANTHROPIC_BASE_URL/v1/messages.
-// We set ANTHROPIC_BASE_URL = http://localhost:3001/api/proxy
-// so the CLI hits: POST http://localhost:3001/api/proxy/v1/messages
-// Express raw body parser preserves the exact request for upstream forwarding.
-app.post('/api/proxy/v1/messages', express.raw({ type: '*/*', limit: '10mb' }), handleProxyRequest);
-
-// ── API Router metrics ──
-app.get('/api/proxy/metrics', (_req, res) => {
-  const limit = Math.min(Math.max(parseInt(String(_req.query.limit || '50'), 10) || 50, 1), 500);
-  res.json(getMetrics(limit));
 });
 
 const server = createServer(app);
