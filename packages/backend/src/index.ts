@@ -4,7 +4,7 @@ import { initPricing } from './integrations/pricing.js';
 import { initDb } from './data/db.js';
 import { createLogger } from './logger.js';
 import { setupWebSocket } from './ws/handler.js';
-import { handleProxyRequest } from './services/api-router.js';
+import { handleProxyRequest, getMetrics } from './services/api-router.js';
 import { registerFsRoutes } from './routes/fs.js';
 import { registerGitRoutes } from './routes/git.js';
 import { registerAzureDevOpsRoutes } from './routes/azure-devops.js';
@@ -40,6 +40,12 @@ app.use((req, _res, next) => {
 // so the CLI hits: POST http://localhost:3001/api/proxy/v1/messages
 // Express raw body parser preserves the exact request for upstream forwarding.
 app.post('/api/proxy/v1/messages', express.raw({ type: '*/*', limit: '10mb' }), handleProxyRequest);
+
+// ── API Router metrics ──
+app.get('/api/proxy/metrics', (_req, res) => {
+  const limit = Math.min(Math.max(parseInt(String(_req.query.limit || '50'), 10) || 50, 1), 500);
+  res.json(getMetrics(limit));
+});
 
 const server = createServer(app);
 

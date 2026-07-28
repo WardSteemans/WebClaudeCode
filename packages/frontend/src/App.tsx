@@ -21,6 +21,7 @@ import { Notifications } from './components/ui/Notifications';
 import { SubagentPanel } from './components/panels/SubagentPanel';
 import { CapabilitiesPanel } from './components/panels/CapabilitiesPanel';
 import { StatusBar } from './components/ui/StatusBar';
+import { ProxyMetricsPanel } from './components/ProxyMetricsPanel';
 import { FolderPicker } from './components/files/FolderPicker';
 
 export default function App() {
@@ -263,6 +264,8 @@ export default function App() {
         )}
 
         <Notifications />
+
+        <ProxyMetricsPanel />
 
         {/* Status bar */}
         <StatusBar />

@@ -320,3 +320,22 @@ export interface WsEnvelope {
   /** The typed event */
   event: AppEvent;
 }
+
+// ==================== API Router Metrics ====================
+
+export interface ProxyMetric {
+  id: string;
+  timestamp: string;
+  /** 'direct' = no images, forwarded straight */
+  routing: 'direct' | 'vision' | 'stripped' | 'error';
+  provider: string;
+  model: string;
+  statusCode: number;
+  /** Time to first byte from upstream (ms) */
+  ttfbMs: number;
+  /** Total time from request to response end (ms) */
+  totalMs: number;
+  bodySize: number;
+  imageCount: number;
+  error?: string;
+}

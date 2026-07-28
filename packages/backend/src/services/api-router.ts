@@ -23,6 +23,42 @@ type JsonValue = string | number | boolean | null | JsonObject | JsonArray;
 interface JsonObject { [key: string]: JsonValue }
 interface JsonArray extends Array<JsonValue> {}
 
+// ── Metrics ──
+
+export interface ProxyMetric {
+  id: string;
+  timestamp: string;
+  /** 'direct' = no images, forwarded straight; 'vision' = images → vision API; 'stripped' = images removed (no key/error); 'error' = failed */
+  routing: 'direct' | 'vision' | 'stripped' | 'error';
+  provider: string;
+  model: string;
+  statusCode: number;
+  /** Time to first byte from upstream (ms) */
+  ttfbMs: number;
+  /** Total time from request to response end (ms) */
+  totalMs: number;
+  bodySize: number;
+  imageCount: number;
+  error?: string;
+}
+
+const metrics: ProxyMetric[] = [];
+const MAX_METRICS = 500;
+
+function recordMetric(m: Omit<ProxyMetric, 'id' | 'timestamp'>): void {
+  const entry: ProxyMetric = {
+    ...m,
+    id: Math.random().toString(36).slice(2, 10),
+    timestamp: new Date().toISOString(),
+  };
+  metrics.push(entry);
+  if (metrics.length > MAX_METRICS) metrics.shift();
+}
+
+export function getMetrics(limit = 50): ProxyMetric[] {
+  return metrics.slice(-limit).reverse();
+}
+
 // ── State ──
 
 let config: UpstreamConfig | null = null;
@@ -84,6 +120,13 @@ function _collectImages(obj: unknown, out: ImageBlock[]): void {
   for (const v of Object.values(record)) _collectImages(v, out);
 }
 
+function extractModel(body: unknown): string {
+  if (body && typeof body === 'object' && 'model' in body) {
+    return String((body as Record<string, unknown>).model || 'unknown');
+  }
+  return 'unknown';
+}
+
 // ── Request rewriting ──
 
 export function rewriteBody(body: unknown, description: string): unknown {
@@ -104,10 +147,7 @@ function _replaceImages(obj: JsonValue, description: string): JsonValue {
 
   const record = obj as JsonObject;
   if (record.type === 'image' && record.source) {
-    return {
-      type: 'text',
-      text: `[Attached image: ${description}]`,
-    } as unknown as JsonValue;
+    return { type: 'text', text: `[Attached image: ${description}]` } as unknown as JsonValue;
   }
 
   const result: JsonObject = {};
@@ -141,17 +181,11 @@ function _stripImages(obj: JsonValue): JsonValue {
   const result: JsonObject = {};
   for (const [key, value] of Object.entries(record)) {
     const cleaned = _stripImages(value);
-    if (cleaned !== null) {
-      result[key] = cleaned;
-    }
+    if (cleaned !== null) result[key] = cleaned;
   }
   return result;
 }
 
-/**
- * After stripping images, ensure no content array is left empty
- * (which would be rejected by LLM APIs).
- */
 function ensureNonEmptyContent(obj: unknown, fallbackText: string): unknown {
   if (!obj || typeof obj !== 'object') return obj;
   if (Array.isArray(obj)) return (obj as unknown[]).map(item => ensureNonEmptyContent(item, fallbackText));
@@ -181,14 +215,8 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
     messages: [{
       role: 'user',
       content: [
-        ...images.map(img => ({
-          type: 'image',
-          source: img.source,
-        })),
-        {
-          type: 'text',
-          text: 'Describe each image in detail. Focus on layout, text content, UI elements, alignment, colors, and any visible issues. Be thorough but concise.',
-        },
+        ...images.map(img => ({ type: 'image', source: img.source })),
+        { type: 'text', text: 'Describe each image in detail. Focus on layout, text content, UI elements, alignment, colors, and any visible issues. Be thorough but concise.' },
       ],
     }],
   });
@@ -198,10 +226,7 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
   return new Promise((resolve, reject) => {
     const url = new URL('/v1/messages', 'https://api.anthropic.com');
     const req = https.request({
-      hostname: url.hostname,
-      port: 443,
-      path: url.pathname,
-      method: 'POST',
+      hostname: url.hostname, port: 443, path: url.pathname, method: 'POST',
       headers: {
         'x-api-key': cfg.anthropicApiKey,
         'anthropic-version': '2023-06-01',
@@ -226,12 +251,9 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
             .join('\n');
           log.info('vision API success', { descriptionLength: text.length });
           resolve(text);
-        } catch (err) {
-          reject(err);
-        }
+        } catch (err) { reject(err); }
       });
     });
-
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('Vision API timeout')); });
     req.write(body);
@@ -239,21 +261,22 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
   });
 }
 
-// ── Streaming forward ──
+// ── Streaming forward (with metrics) ──
 
 function forwardToUpstream(
   targetBaseUrl: string,
   apiKey: string,
   body: string,
   res: Response,
+  onDone: (statusCode: number, ttfbMs: number) => void,
 ): void {
   const url = new URL('/v1/messages', targetBaseUrl);
+  const startTime = Date.now();
+  let firstByte = true;
+  let ttfbMs = 0;
 
   const upstreamReq = https.request({
-    hostname: url.hostname,
-    port: url.port || 443,
-    path: url.pathname,
-    method: 'POST',
+    hostname: url.hostname, port: url.port || 443, path: url.pathname, method: 'POST',
     headers: {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
@@ -262,28 +285,38 @@ function forwardToUpstream(
     },
     timeout: 300_000,
   }, (upstreamRes) => {
+    upstreamRes.on('data', (chunk: Buffer) => {
+      if (firstByte) {
+        ttfbMs = Date.now() - startTime;
+        firstByte = false;
+      }
+      res.write(chunk);
+    });
+    upstreamRes.on('end', () => {
+      onDone(upstreamRes.statusCode || 0, ttfbMs);
+      res.end();
+    });
     res.writeHead(upstreamRes.statusCode || 200, upstreamRes.headers);
-    upstreamRes.pipe(res);
   });
 
   upstreamReq.on('error', (err) => {
     log.error('upstream request failed', err);
     if (!res.headersSent) {
       res.status(502).json({
-        type: 'error',
-        error: { type: 'api_error', message: `Upstream unavailable: ${err.message}` },
+        type: 'error', error: { type: 'api_error', message: `Upstream unavailable: ${err.message}` },
       });
     }
+    onDone(502, 0);
   });
 
   upstreamReq.on('timeout', () => {
     upstreamReq.destroy();
     if (!res.headersSent) {
       res.status(504).json({
-        type: 'error',
-        error: { type: 'timeout', message: 'Upstream request timed out' },
+        type: 'error', error: { type: 'timeout', message: 'Upstream request timed out' },
       });
     }
+    onDone(504, 0);
   });
 
   upstreamReq.write(body);
@@ -293,7 +326,6 @@ function forwardToUpstream(
 // ── Express request handler ──
 
 export async function handleProxyRequest(req: Request, res: Response): Promise<void> {
-  // Validate body
   const raw = req.body;
   if (!raw || (Buffer.isBuffer(raw) && raw.length === 0)) {
     res.status(400).json({ error: 'Empty body' });
@@ -301,65 +333,84 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
   }
 
   const body = Buffer.isBuffer(raw) ? raw.toString('utf-8') : String(raw);
+  const bodySize = body.length;
+  const startTime = Date.now();
 
   // Parse JSON
   let parsed: JsonValue;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    // Not valid JSON — forward as-is to DeepSeek (or fail gracefully)
+  try { parsed = JSON.parse(body); } catch {
     res.status(400).json({ error: 'Invalid JSON body' });
     return;
   }
 
-  // Load upstream config — if no DeepSeek key at all, we can't do anything
+  const model = extractModel(parsed);
+  const provider = model.includes('deepseek') ? 'deepseek' : 'anthropic';
+
   const cfg = loadConfig();
   if (!cfg) {
-    res.status(503).json({
-      type: 'error',
-      error: { type: 'configuration', message: 'DeepSeek API key required' },
-    });
+    res.status(503).json({ type: 'error', error: { type: 'configuration', message: 'DeepSeek API key required' } });
     return;
   }
 
   // No images → forward directly
   if (!hasImages(parsed)) {
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res);
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs) => {
+      recordMetric({
+        routing: 'direct', provider, model, statusCode,
+        ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: 0,
+      });
+    });
     return;
   }
 
   // ── Vision flow ──
-  log.info('image detected — routing through vision');
+  const images = extractImages(parsed);
+  log.info('image detected — routing through vision', { imageCount: images.length });
 
-  // If no Anthropic key, fall through to forwarding without vision
+  // No Anthropic key → strip and forward
   if (!cfg.anthropicApiKey) {
-    log.warn('no Anthropic key — forwarding without vision processing');
-    const cleaned = ensureNonEmptyContent(
-      stripImages(parsed),
-      '[Image(s) removed — no vision API key configured]',
-    );
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res);
+    log.warn('no Anthropic key — stripping images');
+    const cleaned = ensureNonEmptyContent(stripImages(parsed), '[Image(s) removed — no vision API key configured]');
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res, (statusCode, ttfbMs) => {
+      recordMetric({
+        routing: 'stripped', provider: 'deepseek', model, statusCode,
+        ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+        error: 'No Anthropic API key',
+      });
+    });
     return;
   }
 
-  const images = extractImages(parsed);
   try {
     const description = await callVisionAPI(cfg, images);
     const rewritten = rewriteBody(parsed, description);
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(rewritten), res);
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(rewritten), res, (statusCode, ttfbMs) => {
+      recordMetric({
+        routing: 'vision', provider: 'deepseek', model, statusCode,
+        ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+      });
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Vision processing failed';
-    log.warn('vision failed, stripping images and forwarding', { error: message, imageCount: images.length });
+    log.warn('vision failed, stripping images', { error: message });
 
     try {
-      const cleaned = ensureNonEmptyContent(
-        stripImages(parsed),
-        `[${images.length} image(s) could not be processed: ${message}]`,
-      );
-      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res);
+      const cleaned = ensureNonEmptyContent(stripImages(parsed), `[${images.length} image(s) could not be processed: ${message}]`);
+      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res, (statusCode, ttfbMs) => {
+        recordMetric({
+          routing: 'stripped', provider: 'deepseek', model, statusCode,
+          ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+          error: message,
+        });
+      });
     } catch {
-      // Last resort: forward original body — upstream may reject it but at least we tried
-      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res);
+      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs) => {
+        recordMetric({
+          routing: 'error', provider: 'deepseek', model, statusCode,
+          ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+          error: 'Failed to strip images',
+        });
+      });
     }
   }
 }
