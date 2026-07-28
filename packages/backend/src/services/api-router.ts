@@ -494,8 +494,6 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
   const bodySize = body.length;
   const startTime = Date.now();
 
-  console.log(`[proxy] request: bodySize=${bodySize} hasImages=${hasImages(JSON.parse(body))}`);
-
   // Parse JSON
   let parsed: JsonValue;
   try { parsed = JSON.parse(body); } catch {
