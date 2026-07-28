@@ -272,7 +272,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
     if (model?.provider === 'deepseek') {
       return {
-        ANTHROPIC_BASE_URL: s.deepseekBaseUrl || 'https://api.deepseek.com/anthropic',
+        ANTHROPIC_BASE_URL: 'http://localhost:9000',
         ANTHROPIC_API_KEY: s.deepseekApiKey,
         ANTHROPIC_MODEL: modelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,

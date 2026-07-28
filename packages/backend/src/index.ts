@@ -4,6 +4,7 @@ import { initPricing } from './integrations/pricing.js';
 import { initDb } from './data/db.js';
 import { createLogger } from './logger.js';
 import { setupWebSocket } from './ws/handler.js';
+import { startApiRouter, getApiRouterPort, stopApiRouter } from './services/api-router.js';
 import { registerFsRoutes } from './routes/fs.js';
 import { registerGitRoutes } from './routes/git.js';
 import { registerAzureDevOpsRoutes } from './routes/azure-devops.js';
@@ -54,15 +55,18 @@ const { sessions } = setupWebSocket(server);
 // ── Health ──
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', activeSessions: sessions.size });
+  res.json({ status: 'ok', activeSessions: sessions.size, apiRouterPort: getApiRouterPort() });
 });
 
 // ----- Start -----
 
 initDb().then(() => initPricing()).then(() => {
+  startApiRouter(9000);
+
   server.listen(PORT, () => {
-    log.info(`Backend running`, { port: PORT, wsPath: '/ws' });
+    log.info(`Backend running`, { port: PORT, wsPath: '/ws', apiRouterPort: getApiRouterPort() });
     console.log(`Backend running on http://localhost:${PORT}`);
+    console.log(`API router on http://localhost:${getApiRouterPort()}`);
     console.log(`WebSocket on ws://localhost:${PORT}/ws`);
   });
 });
