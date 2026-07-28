@@ -299,21 +299,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return;
   }
 
-  const cfg = loadConfig();
-  if (!cfg) {
-    res.writeHead(503, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({
-      type: 'error',
-      error: { type: 'configuration', message: 'API router not configured — DeepSeek API key required' },
-    }));
-    return;
-  }
-
-  // Read body
+  // Read body first (validate before config check)
   let body: string;
   try {
     body = await readBody(req, 10 * 1024 * 1024);
-  } catch (err) {
+  } catch {
     res.writeHead(413, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'Payload too large' }));
     return;
@@ -322,6 +312,16 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   if (!body.trim()) {
     res.writeHead(400, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'Empty body' }));
+    return;
+  }
+
+  const cfg = loadConfig();
+  if (!cfg) {
+    res.writeHead(503, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      type: 'error',
+      error: { type: 'configuration', message: 'API router not configured — DeepSeek API key required' },
+    }));
     return;
   }
 
