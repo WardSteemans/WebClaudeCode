@@ -40,6 +40,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
     setInput,
     messagesEndRef,
     handleSend,
+    abort,
     handleSegmentClick,
     isSegmentCollapsed,
     handleToggleThinkingExpand,
@@ -121,7 +122,21 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
                 ) : msg.role === 'error' ? (
                   <span>{msg.content}</span>
                 ) : (
-                  <MessageContent content={msg.content} />
+                  <>
+                    {msg.images && msg.images.length > 0 && (
+                      <div className="flex gap-1.5 mb-2 flex-wrap">
+                        {msg.images.map((img, i) => (
+                          <img
+                            key={i}
+                            src={`data:${img.mediaType};base64,${img.base64}`}
+                            alt="Attached"
+                            className="max-w-[200px] max-h-[150px] rounded-lg object-cover"
+                          />
+                        ))}
+                      </div>
+                    )}
+                    <MessageContent content={msg.content} />
+                  </>
                 )}
               </div>
               <div className={`text-[10px] text-slate-400 dark:text-slate-600 mt-0.5 ${msg.role === 'user' ? 'text-right' : 'text-left'} px-1`} title={new Date(msg.timestamp).toLocaleString()}>
@@ -131,9 +146,15 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
           );
         })}
         {isStreaming && (
-          <div className="flex items-center gap-2 text-xs text-slate-600 px-1">
+          <div className="flex items-center gap-2 text-xs px-1">
             <span className="w-1.5 h-1.5 rounded-full bg-accent-500 animate-pulse" />
-            Processing…
+            <span className="text-slate-600 dark:text-slate-400">Processing…</span>
+            <button
+              onClick={abort}
+              className="ml-2 px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[11px] font-medium transition-colors"
+            >
+              Stop
+            </button>
           </div>
         )}
         <div ref={messagesEndRef} />

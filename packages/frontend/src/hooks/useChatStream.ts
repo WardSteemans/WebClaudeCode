@@ -578,7 +578,7 @@ export function useChatStream({
     const displayText = images.length > 0
       ? prompt + (images.length > 0 ? `\n\n[${images.length} attached image${images.length > 1 ? 's' : ''}]` : '')
       : prompt;
-    setMessages((prev) => [...prev, { role: 'user', content: displayText, id: crypto.randomUUID(), timestamp: new Date().toISOString() }]);
+    setMessages((prev) => [...prev, { role: 'user', content: displayText, id: crypto.randomUUID(), timestamp: new Date().toISOString(), images: images.length > 0 ? images : undefined }]);
     updateChatLastMessage(tabId, chatId);
 
     const env: Record<string, string> = {};
@@ -641,6 +641,7 @@ export function useChatStream({
     imagesRef,
     // Actions
     handleSend,
+    abort: () => send({ type: 'abort' }),
     handleSegmentClick,
     isSegmentCollapsed,
     handleToggleThinkingExpand,

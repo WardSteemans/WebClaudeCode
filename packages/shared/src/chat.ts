@@ -35,6 +35,7 @@ export interface ChatMessage {
   content: string;
   id: string;
   timestamp: string; // ISO 8601
+  images?: Array<{ base64: string; mediaType: string }>;
 }
 
 // ==================== Helpers ====================
