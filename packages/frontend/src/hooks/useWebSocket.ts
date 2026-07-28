@@ -1,21 +1,14 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { AppEvent } from '@cc-gui/shared';
+import type { AppEvent, WsOutgoingMessage } from '@cc-gui/shared';
 import { createFrontendLogger } from '../logger';
 
 const log = createFrontendLogger('ws');
 
-// Legacy messages that don't use the typed event format yet
-type LegacyMessage =
-  | { type: 'session_ready'; sessionId: string }
-  | { type: 'session_exit'; sessionId: string; exitCode: number | null }
-  | { type: 'aborted' };
+// Received messages from server — discriminated union matching WsOutgoingMessage
+export type WsMessage = WsOutgoingMessage;
 
-export type WsMessage =
-  | { type: 'event'; chatId: string; event: AppEvent; subagentId?: string }
-  | { type: 'subagent_ready'; chatId: string; subagentId: string; sessionId: string }
-  | { type: 'subagent_exit'; chatId: string; subagentId: string; exitCode: number | null }
-  | { type: 'subagent_aborted'; subagentId: string }
-  | LegacyMessage;
+// For legacy consumers that destructure specific shapes
+export type { WsOutgoingMessage };
 
 interface UseWebSocketOptions {
   url: string;

@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import type { LogLevel, BaseLogger } from '@cc-gui/shared';
 
-// ── Types ──
-
-export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+// Re-export for external consumers
+export type { LogLevel };
 
 interface LogEntry {
   timestamp: string;
@@ -150,12 +150,7 @@ function writeEntry(entry: LogEntry): void {
 
 // ── Logger interface ──
 
-export interface Logger {
-  debug(message: string, data?: Record<string, unknown>): void;
-  info(message: string, data?: Record<string, unknown>): void;
-  warn(message: string, data?: Record<string, unknown>): void;
-  error(message: string, error?: Error | string, data?: Record<string, unknown>): void;
-
+export interface Logger extends BaseLogger {
   /** Log the start of a step. Returns the step name for matching end() call. */
   begin(step: string, data?: Record<string, unknown>): string;
   /** Log the successful end of a step. */

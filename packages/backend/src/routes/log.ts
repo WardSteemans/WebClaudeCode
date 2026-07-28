@@ -1,5 +1,6 @@
 import express from 'express';
-import { createLogger, type LogLevel } from '../logger.js';
+import { createLogger } from '../logger.js';
+import type { LogLevel } from '@cc-gui/shared';
 
 export function registerLogRoutes(app: express.Express): void {
   app.post('/api/log', express.json(), (req, res) => {

@@ -11,7 +11,7 @@ import type {
   WsOutgoingEvent, WsOutgoingSessionReady, WsOutgoingSessionExit,
   WsOutgoingAborted, WsOutgoingSubagentReady, WsOutgoingSubagentExit,
   WsOutgoingSubagentAborted, WsOutgoingError,
-} from './messages.js';
+} from '@cc-gui/shared';
 
 const log = createLogger('ws');
 

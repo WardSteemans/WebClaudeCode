@@ -4,6 +4,7 @@ import { homedir } from 'os';
 import { createLogger } from '../logger.js';
 import { normalizeBlocks, blocksToText } from '../services/contentNormalizer.js';
 import type { RawClaudeEvent } from '../services/eventParser/eventTypes.js';
+import type { SessionMeta } from '@cc-gui/shared';
 
 const log = createLogger('sessions');
 
@@ -29,14 +30,7 @@ function readHead(filePath: string, bytes: number, offset = 0): string {
   }
 }
 
-export interface SessionMeta {
-  sessionId: string;
-  title: string;
-  timestamp: string;
-  messageCount: number;
-  file: string;
-  workDir?: string;
-}
+export { type SessionMeta };
 
 export function listSessions(workDir: string): SessionMeta[] {
   const dir = projectDir(workDir);

@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { createLogger } from '../logger.js';
 import type { RawSystemEvent } from '../services/eventParser/eventTypes.js';
+import type { PermissionMode } from '@cc-gui/shared';
 
 const log = createLogger('session');
 
@@ -26,7 +27,7 @@ interface SessionOptions {
   sessionId?: string;
   resumeSessionId?: string;
   workDir: string;
-  permissionMode?: 'default' | 'acceptEdits' | 'auto' | 'plan' | 'dontAsk' | 'bypassPermissions';
+  permissionMode?: PermissionMode;
   env?: Record<string, string>;
   onRawLine: RawLineCallback;           // NEW: raw Claude JSON line
   onExit: (code: number | null) => void;

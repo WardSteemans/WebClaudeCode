@@ -411,10 +411,11 @@ export function useChatStream({
     onMessage: (msg) => {
       if ('chatId' in msg && msg.chatId !== chatId) return;
       if (msg.type === 'event') {
+        const event = msg.event as AppEvent;
         if (msg.subagentId) {
-          useSubagentStore.getState().pushEvent(msg.subagentId, msg.event);
+          useSubagentStore.getState().pushEvent(msg.subagentId, event);
         } else {
-          handleEvent(msg.event);
+          handleEvent(event);
         }
       } else if (msg.type === 'session_ready') {
         updateChatSessionId(tabId, chatId, msg.sessionId);

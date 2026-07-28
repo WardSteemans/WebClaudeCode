@@ -1,7 +1,10 @@
 // ── Frontend logger — sends to backend /api/log endpoint ──
 // All sends are fire-and-forget (no await) to avoid blocking the UI.
 
-export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+import type { LogLevel, BaseLogger } from '@cc-gui/shared';
+
+// Re-export for external consumers
+export type { LogLevel };
 
 interface LogPayload {
   level: LogLevel;
@@ -27,12 +30,7 @@ function sendLog(payload: LogPayload): void {
   });
 }
 
-export interface FrontendLogger {
-  debug(message: string, data?: Record<string, unknown>): void;
-  info(message: string, data?: Record<string, unknown>): void;
-  warn(message: string, data?: Record<string, unknown>): void;
-  error(message: string, error?: Error | string, data?: Record<string, unknown>): void;
-}
+export interface FrontendLogger extends BaseLogger {}
 
 export function createFrontendLogger(module: string): FrontendLogger {
   return {

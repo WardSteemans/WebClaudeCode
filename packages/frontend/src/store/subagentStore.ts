@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppEvent, ChatAssistantEvent, ChatThinkingEvent, ToolStartedEvent, ToolCompletedEvent, SessionUsageEvent } from '@cc-gui/shared';
+import type { AppEvent, ChatAssistantEvent, ChatThinkingEvent, ToolStartedEvent, ToolCompletedEvent, SessionUsageEvent, ThinkingTool, ThinkingFile } from '@cc-gui/shared';
+import { toolInputDetail } from '@cc-gui/shared';
 
 // ── Types (serializable — no Map) ──
 
@@ -10,25 +11,10 @@ export interface SubagentMessage {
   id: string;
 }
 
-export interface SubagentTool {
-  id: string;
-  name: string;
-  detail: string;
-  status: 'running' | 'done' | 'error';
-  durationMs?: number;
-  output?: string;
-  files?: string[];
-}
-
-export interface SubagentFile {
-  type: 'read' | 'changed' | 'created' | 'deleted';
-  path: string;
-}
-
 export interface SubagentThinkingBlock {
   text: string;
-  tools: SubagentTool[];
-  files: SubagentFile[];
+  tools: ThinkingTool[];
+  files: ThinkingFile[];
   secs: number;
   startTime: number;
 }
@@ -156,12 +142,9 @@ export const useSubagentStore = create<SubagentStoreState>()(
 
           case 'tool.started': {
             const e = event as ToolStartedEvent;
-            let detail = '';
-            if (e.toolInput?.query) detail = `"${String(e.toolInput.query).slice(0, 60)}"`;
-            else if (e.toolInput?.url) detail = String(e.toolInput.url).slice(0, 60);
-            else if (Object.keys(e.toolInput).length > 0) detail = JSON.stringify(e.toolInput).slice(0, 80);
+            const detail = toolInputDetail(e.toolName, e.toolInput);
 
-            const newTool: SubagentTool = {
+            const newTool: ThinkingTool = {
               id: crypto.randomUUID(), name: e.toolName, detail, status: 'running', files: e.files,
             };
 
