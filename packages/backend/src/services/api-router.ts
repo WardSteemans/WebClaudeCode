@@ -84,7 +84,7 @@ function loadConfig(): UpstreamConfig | null {
     deepseekBaseUrl: deepseekBaseUrl.replace(/\/+$/, ''),
     deepseekApiKey,
     anthropicApiKey: settings.anthropicApiKey || '',
-    visionModel: settings.visionModel || 'claude-3-5-haiku-20241022',
+    visionModel: settings.visionModel || 'claude-3-5-haiku-latest',
   };
   configLoadedAt = now;
   return config;
