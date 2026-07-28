@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, existsSync, openSync, readSync, closeSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { createLogger } from './logger.js';
+import { createLogger } from '../logger.js';
 
 const log = createLogger('sessions');
 

@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
-import { createLogger } from './logger.js';
+import { createLogger } from '../logger.js';
 
 const log = createLogger('session');
 

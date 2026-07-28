@@ -1,7 +1,7 @@
 import initSqlJs, { Database as SqlJsDb } from 'sql.js';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createLogger } from './logger.js';
+import { createLogger } from '../logger.js';
 
 const log = createLogger('db');
 
