@@ -268,7 +268,7 @@ function forwardToUpstream(
   apiKey: string,
   body: string,
   res: Response,
-  onDone: (statusCode: number, ttfbMs: number) => void,
+  onDone: (statusCode: number, ttfbMs: number, error?: string) => void,
 ): void {
   const url = new URL('/v1/messages', targetBaseUrl);
   const startTime = Date.now();
@@ -306,7 +306,7 @@ function forwardToUpstream(
         type: 'error', error: { type: 'api_error', message: `Upstream unavailable: ${err.message}` },
       });
     }
-    onDone(502, 0);
+    onDone(502, 0, err.message);
   });
 
   upstreamReq.on('timeout', () => {
@@ -316,7 +316,7 @@ function forwardToUpstream(
         type: 'error', error: { type: 'timeout', message: 'Upstream request timed out' },
       });
     }
-    onDone(504, 0);
+    onDone(504, 0, 'timeout');
   });
 
   upstreamReq.write(body);
@@ -473,10 +473,11 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
 
   // No images and no rule-triggered vision → forward directly
   if (!shouldUseVision) {
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs) => {
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'direct', provider, model: effectiveModel, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: 0,
+        ...(errMsg ? { error: errMsg } : {}),
       });
     });
     return;
@@ -490,11 +491,11 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
   if (!cfg.anthropicApiKey) {
     log.warn('no Anthropic key — stripping images');
     const cleaned = ensureNonEmptyContent(stripImages(parsed), '[Image(s) removed — no vision API key configured]');
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res, (statusCode, ttfbMs) => {
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'stripped', provider: 'deepseek', model, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
-        error: 'No Anthropic API key',
+        error: errMsg || 'No Anthropic API key',
       });
     });
     return;
@@ -503,10 +504,11 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
   try {
     const description = await callVisionAPI(cfg, images);
     const rewritten = rewriteBody(parsed, description);
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(rewritten), res, (statusCode, ttfbMs) => {
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(rewritten), res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'vision', provider: 'deepseek', model, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+        ...(errMsg ? { error: errMsg } : {}),
       });
     });
   } catch (err) {
@@ -515,19 +517,19 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
 
     try {
       const cleaned = ensureNonEmptyContent(stripImages(parsed), `[${images.length} image(s) could not be processed: ${message}]`);
-      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res, (statusCode, ttfbMs) => {
+      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res, (statusCode, ttfbMs, errMsg) => {
         recordMetric({
           routing: 'stripped', provider: 'deepseek', model, statusCode,
           ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
-          error: message,
+          error: errMsg || message,
         });
       });
     } catch {
-      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs) => {
+      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs, errMsg) => {
         recordMetric({
           routing: 'error', provider: 'deepseek', model, statusCode,
           ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
-          error: 'Failed to strip images',
+          error: errMsg || 'Failed to strip images',
         });
       });
     }
