@@ -276,6 +276,7 @@ function forwardToUpstream(
   targetBaseUrl: string,
   apiKey: string,
   body: string,
+  req: Request,
   res: Response,
   onDone: (statusCode: number, ttfbMs: number, error?: string) => void,
 ): void {
@@ -284,14 +285,24 @@ function forwardToUpstream(
   let firstByte = true;
   let ttfbMs = 0;
 
+  // Forward safe headers from the original CLI request
+  const forwardHeaders: Record<string, string | number> = {
+    'x-api-key': apiKey,
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(body),
+  };
+
+  // Copy API-relevant headers from CLI, but not auth or host
+  for (const [key, value] of Object.entries(req.headers)) {
+    const lower = key.toLowerCase();
+    if (lower.startsWith('anthropic') && lower !== 'anthropic-api-key' && value) {
+      forwardHeaders[lower] = Array.isArray(value) ? value[0] : value;
+    }
+  }
+
   const upstreamReq = https.request({
     hostname: url.hostname, port: url.port || 443, path: url.pathname, method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body),
-    },
+    headers: forwardHeaders,
     timeout: 300_000,
     ...getTlsOptions(),
   }, (upstreamRes) => {
@@ -498,7 +509,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
 
   // No images and no rule-triggered vision → forward directly
   if (!shouldUseVision) {
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs, errMsg) => {
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, req, res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'direct', provider, model: effectiveModel, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: 0,
@@ -516,7 +527,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
   if (!cfg.anthropicApiKey) {
     log.warn('no Anthropic key — stripping images');
     const cleaned = ensureNonEmptyContent(stripImages(parsed), '[Image(s) removed — no vision API key configured]');
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res, (statusCode, ttfbMs, errMsg) => {
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), req, res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'stripped', provider: 'deepseek', model, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
@@ -529,7 +540,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
   try {
     const description = await callVisionAPI(cfg, images);
     const rewritten = rewriteBody(parsed, description);
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(rewritten), res, (statusCode, ttfbMs, errMsg) => {
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(rewritten), req, res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'vision', provider: 'deepseek', model, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
@@ -542,7 +553,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
 
     try {
       const cleaned = ensureNonEmptyContent(stripImages(parsed), `[${images.length} image(s) could not be processed: ${message}]`);
-      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), res, (statusCode, ttfbMs, errMsg) => {
+      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(cleaned), req, res, (statusCode, ttfbMs, errMsg) => {
         recordMetric({
           routing: 'stripped', provider: 'deepseek', model, statusCode,
           ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
@@ -550,7 +561,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
         });
       });
     } catch {
-      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, res, (statusCode, ttfbMs, errMsg) => {
+      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, req, res, (statusCode, ttfbMs, errMsg) => {
         recordMetric({
           routing: 'error', provider: 'deepseek', model, statusCode,
           ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,

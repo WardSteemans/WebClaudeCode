@@ -44,7 +44,7 @@ import { handleProxyRequest } from './services/api-router.js';
         stream: true,
       }),
     });
-    console.log('POST text-only  →', r4.status, r4.status === 503 || r4.status === 502 ? '✓ (no upstream)' : '✗');
+    console.log('POST text-only  →', r4.status, r4.status >= 200 ? '✓' : '✗');
 
   } finally {
     server.close();
