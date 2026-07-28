@@ -280,7 +280,9 @@ function forwardToUpstream(
   res: Response,
   onDone: (statusCode: number, ttfbMs: number, error?: string) => void,
 ): void {
-  const url = new URL('/v1/messages', targetBaseUrl);
+  // Build full URL by concatenating — NOT using new URL() which drops the path
+  const fullUrl = targetBaseUrl.replace(/\/+$/, '') + '/v1/messages';
+  const parsedUrl = new URL(fullUrl);
   const startTime = Date.now();
   let firstByte = true;
   let ttfbMs = 0;
@@ -301,7 +303,7 @@ function forwardToUpstream(
   }
 
   const upstreamReq = https.request({
-    hostname: url.hostname, port: url.port || 443, path: url.pathname, method: 'POST',
+    hostname: parsedUrl.hostname, port: parsedUrl.port || 443, path: parsedUrl.pathname, method: 'POST',
     headers: forwardHeaders,
     timeout: 300_000,
     ...getTlsOptions(),
@@ -509,12 +511,6 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
 
   // No images and no rule-triggered vision → forward directly
   if (!shouldUseVision) {
-    log.info('forwarding direct (no images)', {
-      model: extractModel(parsed),
-      bodySize: body.length,
-      targetUrl: cfg.deepseekBaseUrl,
-      bodyPreview: body.slice(0, 200),
-    });
     forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, req, res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'direct', provider, model: effectiveModel, statusCode,
