@@ -184,6 +184,7 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
         switch (msg.type) {
           // ── Start Claude session ──
           case 'prompt': {
+            console.log(`[ws] prompt received: workDir=${msg.workDir} hasEnv=${!!msg.env} promptType=${Array.isArray(msg.prompt) ? 'array' : typeof msg.prompt} promptLen=${typeof msg.prompt === 'string' ? msg.prompt.length : Array.isArray(msg.prompt) ? msg.prompt.length + ' blocks' : 'none'}`);
             if (activeSession) {
               activeSession.abort();
               sessions.delete(activeSession.sessionId);
