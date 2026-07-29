@@ -45,6 +45,7 @@ function findWorkspaceRoot(): string {
 
 const WORKSPACE_ROOT = findWorkspaceRoot();
 const LOG_DIR = path.join(WORKSPACE_ROOT, 'logging');
+const MAIN_LOG_DIR = path.join(LOG_DIR, 'main');
 let currentDate = '';
 let writeStream: fs.WriteStream | null = null;
 let buffer: string[] = [];
@@ -54,9 +55,10 @@ const MAX_BUFFER_SIZE = 50;
 
 // ── Init ──
 
-function ensureLogDir(): void {
-  if (!fs.existsSync(LOG_DIR)) {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
+function ensureLogDir(subDir?: string): void {
+  const dir = subDir ? path.join(LOG_DIR, subDir) : LOG_DIR;
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -65,7 +67,7 @@ function getLogFileName(): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
-  return path.join(LOG_DIR, `cc-gui-${y}-${m}-${d}.log`);
+  return path.join(MAIN_LOG_DIR, `cc-gui-${y}-${m}-${d}.log`);
 }
 
 function rotateIfNeeded(): void {
@@ -77,14 +79,14 @@ function rotateIfNeeded(): void {
       writeStream = null;
     }
     currentDate = today;
-    ensureLogDir();
+    ensureLogDir('main');
     writeStream = fs.createWriteStream(getLogFileName(), { flags: 'a' });
   }
 }
 
 function ensureStream(): fs.WriteStream {
   if (!writeStream) {
-    ensureLogDir();
+    ensureLogDir('main');
     currentDate = new Date().toISOString().slice(0, 10);
     writeStream = fs.createWriteStream(getLogFileName(), { flags: 'a' });
   }
@@ -179,12 +181,18 @@ function writeEntry(entry: LogEntry): void {
 
 function writeDedicatedEntry(name: string, entry: LogEntry): void {
   try {
-    ensureLogDir();
+    // name supports subdirectories via "/": e.g. "diagnostics/cut-debug"
+    const parts = name.split('/');
+    const subDir = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+    const baseName = parts[parts.length - 1];
+    const logDir = subDir ? path.join(LOG_DIR, subDir) : LOG_DIR;
+    ensureLogDir(subDir || undefined);
+
     const now = new Date();
     const y = now.getFullYear();
     const mo = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
-    const fileName = path.join(LOG_DIR, `${name}-${y}-${mo}-${d}.log`);
+    const fileName = path.join(logDir, `${baseName}-${y}-${mo}-${d}.log`);
 
     // Use same format as main log for consistency
     const line = formatEntry(entry);

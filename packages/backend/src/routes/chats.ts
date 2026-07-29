@@ -4,7 +4,7 @@ import * as https from 'https';
 import { createLogger } from '../logger.js';
 import { getSettings } from '../data/db.js';
 
-const log = createLogger('chats', 'title-gen');
+const log = createLogger('chats', 'title/title-gen');
 
 interface ChatMessage {
   role: string;

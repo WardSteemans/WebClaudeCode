@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { SLASH_COMMANDS, SlashCommand } from '../../data/commands';
 import { useEventBus } from '../../store/eventBus';
 
@@ -12,6 +12,8 @@ interface PromptInputProps {
   disabled?: boolean;
   placeholder?: string;
   onImagesChange?: (images: ImageAttachment[]) => void;
+  onFilesChange?: (files: FileAttachment[]) => void;
+  resetKey?: number;
 }
 
 export interface ImageAttachment {
@@ -19,6 +21,23 @@ export interface ImageAttachment {
   base64: string;
   mediaType: string;
   fileName: string;
+}
+
+export interface FileAttachment {
+  id: string;
+  text: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
+const FILE_ACCEPT = '.txt,.log,.csv,.json,.md,.xml,.yaml,.yml,.toml,.ini,.cfg,.env,.js,.ts,.jsx,.tsx,.py,.sh,.bat,.ps1,.css,.html,.htm,.sql,.graphql,.proto,.rs,.go,.java,.c,.cpp,.h,.hpp,.cs';
+const MAX_FILE_SIZE = 1_000_000;
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
 interface AutocompleteState {
@@ -108,7 +127,7 @@ function findAutocompleteTrigger(
 
 // ==================== Component ====================
 
-export function PromptInput({
+export const PromptInput = memo(function PromptInput({
   workDir,
   value,
   onChange,
@@ -116,10 +135,13 @@ export function PromptInput({
   disabled,
   placeholder,
   onImagesChange,
+  onFilesChange,
+  resetKey,
 }: PromptInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -127,6 +149,7 @@ export function PromptInput({
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [files, setFiles] = useState<FileAttachment[]>([]);
 
   // ── Dynamic slash commands from Claude Code (merged with static list) ──
   const dynamicSlashCommands = useEventBus((s) => s.slashCommands);
@@ -386,11 +409,59 @@ export function PromptInput({
     onImagesChange?.(updated);
   }, [images, onImagesChange]);
 
-  // ── Reset images (called externally after submit) ──
-  const resetImages = useCallback(() => {
+  // ── File picker ──
+  const handleFilePick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFilesSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(e.target.files || []);
+    const textFiles = selected.filter(f => {
+      const ext = '.' + f.name.split('.').pop()?.toLowerCase();
+      return FILE_ACCEPT.split(',').includes(ext) && f.size <= MAX_FILE_SIZE;
+    });
+    if (textFiles.length === 0) return;
+
+    let loaded = 0;
+    const newFiles: FileAttachment[] = [];
+    for (const file of textFiles) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        newFiles.push({
+          id: crypto.randomUUID(),
+          text: reader.result as string,
+          fileName: file.name,
+          mimeType: file.type || 'text/plain',
+          size: file.size,
+        });
+        loaded++;
+        if (loaded === textFiles.length) {
+          const updated = [...files, ...newFiles];
+          setFiles(updated);
+          onFilesChange?.(updated);
+        }
+      };
+      reader.readAsText(file);
+    }
+    // Reset the input so the same file can be re-selected
+    e.target.value = '';
+  }, [files, onFilesChange]);
+
+  // ── Remove file ──
+  const removeFile = useCallback((id: string) => {
+    const updated = files.filter(f => f.id !== id);
+    setFiles(updated);
+    onFilesChange?.(updated);
+  }, [files, onFilesChange]);
+
+  // ── Reset all attachments when resetKey increments ──
+  useEffect(() => {
+    if (resetKey === undefined) return;
     setImages([]);
+    setFiles([]);
     onImagesChange?.([]);
-  }, [onImagesChange]);
+    onFilesChange?.([]);
+  }, [resetKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showDropdown = autocomplete && suggestions.length > 0;
 
@@ -413,16 +484,29 @@ export function PromptInput({
         />
       )}
 
-      <div className="relative flex gap-2">
-        {/* Image previews */}
-        {images.length > 0 && (
-          <div className="absolute bottom-full left-0 right-0 mb-2 flex gap-2 flex-wrap">
+      <div className="relative flex flex-col gap-2 flex-1 min-w-0">
+        {/* Attachment row — in flow, not absolute */}
+        {(images.length > 0 || files.length > 0) && (
+          <div className="flex gap-2 flex-wrap">
             {images.map(img => (
-              <div key={img.id} className="relative group w-16 h-16 rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-input-bg)]">
-                <img src={`data:${img.mediaType};base64,${img.base64}`} alt="Attached" className="w-full h-full object-cover" />
+              <div key={img.id} className="relative group w-16 h-16 rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-input-bg)] shrink-0">
+                <img src={`data:${img.mediaType};base64,${img.base64}`} alt={img.fileName} className="w-full h-full object-cover" />
                 <button
                   onClick={() => removeImage(img.id)}
                   className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >×</button>
+              </div>
+            ))}
+            {files.map(file => (
+              <div key={file.id} className="relative group flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-slate-100 dark:bg-slate-800 text-xs shrink-0 max-w-[280px]">
+                <span className="text-sm shrink-0">📄</span>
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-700 dark:text-slate-300 truncate">{file.fileName}</div>
+                  <div className="text-[10px] text-slate-400">{formatFileSize(file.size)}</div>
+                </div>
+                <button
+                  onClick={() => removeFile(file.id)}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-slate-500 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                 >×</button>
               </div>
             ))}
@@ -482,14 +566,37 @@ export function PromptInput({
           />
         </div>
 
-        {/* Send button */}
-        <button
-          onClick={onSubmit}
-          disabled={!value.trim() || disabled}
-          className="px-5 py-2 bg-accent-600 hover:bg-accent-500 disabled:bg-[var(--color-input-bg)] disabled:text-[var(--color-text-muted)] rounded-xl text-sm font-medium transition-all shrink-0 shadow-sm shadow-accent-900/30"
-        >
-          Send
-        </button>
+        <div className="flex gap-2 shrink-0">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={FILE_ACCEPT}
+            onChange={handleFilesSelected}
+            className="hidden"
+          />
+
+          {/* File picker button */}
+          <button
+            type="button"
+            onClick={handleFilePick}
+            disabled={disabled}
+            className="px-2.5 py-2 bg-[var(--color-input-bg)] hover:bg-slate-200 dark:hover:bg-slate-700 border border-[var(--color-border)] rounded-xl text-sm text-slate-500 dark:text-slate-400 transition-colors shrink-0 disabled:opacity-40"
+            title="Attach files"
+          >
+            📎
+          </button>
+
+          {/* Send button */}
+          <button
+            onClick={onSubmit}
+            disabled={!value.trim() || disabled}
+            className="px-5 py-2 bg-accent-600 hover:bg-accent-500 disabled:bg-[var(--color-input-bg)] disabled:text-[var(--color-text-muted)] rounded-xl text-sm font-medium transition-all shrink-0 shadow-sm shadow-accent-900/30"
+          >
+            Send
+          </button>
+        </div>
 
         {/* Autocomplete dropdown */}
         {showDropdown && (
@@ -539,7 +646,7 @@ export function PromptInput({
       </div>
     </>
   );
-}
+});
 
 // ==================== Filtered suggestions ====================
 

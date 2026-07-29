@@ -1,4 +1,4 @@
-import { useState, useMemo, memo } from 'react';
+import { useState, useMemo, useEffect, memo, useDeferredValue } from 'react';
 import type { ChatMessage, ThinkingBlock } from '../../lib/chat/types';
 import { formatChatTime } from '../../lib/chat/thinking-utils';
 import { useTabStore } from '../../store';
@@ -81,6 +81,42 @@ function QuestionAnswerBar({ question, options, onSubmit }: QuestionAnswerBarPro
   );
 }
 
+// ==================== File Preview Block ====================
+
+const COLLAPSE_LINES = 20;
+
+function FilePreviewBlock({ fileName, content }: { fileName: string; content: string }) {
+  const lines = content.split('\n');
+  const lineCount = lines.length;
+  const collapsed = lineCount > COLLAPSE_LINES;
+  const [expanded, setExpanded] = useState(false);
+  const displayLines = collapsed && !expanded ? lines.slice(0, COLLAPSE_LINES) : lines;
+  const displayContent = displayLines.join('\n');
+
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-xs">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
+        <span className="text-sm">📄</span>
+        <span className="font-medium text-slate-700 dark:text-slate-300 truncate">{fileName}</span>
+        <span className="text-[10px] text-slate-400 ml-auto shrink-0">{lineCount} {lineCount === 1 ? 'line' : 'lines'}</span>
+      </div>
+      <div className="max-h-[300px] overflow-auto">
+        <pre className="px-3 py-2 text-[11px] leading-relaxed whitespace-pre font-mono text-slate-600 dark:text-slate-400 bg-white dark:bg-[#0d1117]">
+          {displayContent}
+        </pre>
+      </div>
+      {collapsed && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full px-3 py-1 text-[11px] text-slate-500 hover:text-accent-600 dark:hover:text-accent-400 bg-slate-50 dark:bg-slate-800/30 hover:bg-slate-100 dark:hover:bg-slate-800/50 transition-colors border-t border-slate-200 dark:border-slate-700"
+        >
+          {expanded ? 'Show less' : `Show all ${lineCount} lines`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ==================== Props ====================
 
 interface ChatPanelProps { tabId: string; chatId: string; workDir: string; }
@@ -94,11 +130,20 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
   const workDir = useMemo(() => chat?.workDir || _tabWorkDir, [chat?.workDir, _tabWorkDir]);
   const updateChatWorkDir = useTabStore((s) => s.updateChatWorkDir);
 
+  // ── Mount/unmount logging ──
+  useEffect(() => {
+    console.log(`[ChatPanel] MOUNT: chat=[${chatId.slice(0,8)}] title="${chat?.title || '?'}" sessionId=[${chat?.sessionId?.slice(0,8) || 'none'}]`);
+    return () => {
+      console.log(`[ChatPanel] UNMOUNT: chat=[${chatId.slice(0,8)}] title="${chat?.title || '?'}"`);
+    };
+  }, [chatId]);
+
   // ── Local UI state (doesn't belong in the stream hook) ──
   const [permissionMode, setPermissionMode] = useState(chat?.permissionMode || 'default');
   const [selectedModel, setSelectedModel] = useState(chat?.model || safeGetItem('cc-gui-model') || 'claude-sonnet-4-20250514');
   const [selectedEffort, setSelectedEffort] = useState(chat?.effort || '');
   const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const [resetKey, setResetKey] = useState(0);
 
   // ── Streaming hook ──
   const {
@@ -116,6 +161,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
     isSegmentCollapsed,
     handleToggleThinkingExpand,
     imagesRef,
+    filesRef,
     sendWs,
     answerQuestion,
     pendingQuestionRef,
@@ -123,6 +169,10 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
     tabId, chatId, workDir, permissionMode, selectedModel, selectedEffort,
     chatSessionId: chat?.sessionId ?? null,
   });
+
+  // Defer messages during streaming so React can interrupt low-priority
+  // message-list renders to handle high-priority user input (typing).
+  const renderMessages = useDeferredValue(messages);
 
   // ── Persist per-chat overrides to store ──
   const updateChatPermissionMode = useTabStore((s) => s.updateChatPermissionMode);
@@ -161,7 +211,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
     <div className="flex flex-col h-full">
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
-        {messages.length === 0 && (
+        {renderMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-2">
             <span className="text-sm">Ready in</span>
             <button
@@ -173,7 +223,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
             </button>
           </div>
         )}
-        {messages.map((msg) => {
+        {renderMessages.map((msg) => {
           const thinkBlock = thinkingBlocks.get(msg.id);
           const isThinkingMsg = !!(msg.role === 'tool' && thinkBlock);
           const isSystemMsg = msg.role === 'system';
@@ -206,6 +256,13 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
                             alt="Attached"
                             className="max-w-[200px] max-h-[150px] rounded-lg object-cover"
                           />
+                        ))}
+                      </div>
+                    )}
+                    {msg.files && msg.files.length > 0 && (
+                      <div className="flex flex-col gap-2 mb-2">
+                        {msg.files.map((file, i) => (
+                          <FilePreviewBlock key={i} fileName={file.fileName} content={file.text} />
                         ))}
                       </div>
                     )}
@@ -271,9 +328,14 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
           workDir={workDir}
           value={input}
           onChange={setInput}
-          onSubmit={handleSend}
+          onSubmit={() => {
+            handleSend();
+            setResetKey(k => k + 1);
+          }}
           disabled={isStreaming}
           onImagesChange={(imgs) => { imagesRef.current = imgs; }}
+          onFilesChange={(f) => { filesRef.current = f; }}
+          resetKey={resetKey}
           placeholder={isStreaming ? 'Waiting for response…' : 'Send a prompt…'}
         />
       </div>

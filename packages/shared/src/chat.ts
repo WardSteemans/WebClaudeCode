@@ -30,12 +30,21 @@ export interface ThinkingBlock {
   startTime: number;
 }
 
+export interface FileAttachment {
+  id: string;
+  text: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'tool' | 'error' | 'system';
   content: string;
   id: string;
   timestamp: string; // ISO 8601
   images?: Array<{ base64: string; mediaType: string }>;
+  files?: Array<{ text: string; fileName: string; mimeType: string }>;
 }
 
 // ==================== Helpers ====================
