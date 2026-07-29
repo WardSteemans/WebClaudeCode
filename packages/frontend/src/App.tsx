@@ -54,6 +54,7 @@ export default function App() {
     if (urlRestoredRef.current) return;
     if (tabs.length === 0) return;
     urlRestoredRef.current = true;
+    console.log(`[App] URL RESTORE: url=[${location.pathname}] tabs=${tabs.length} activeTabId=[${activeTabId?.slice(0,8)}]`);
     if (urlTabId) {
       const tab = tabs.find(t => t.id === urlTabId);
       if (tab) {
@@ -80,9 +81,11 @@ export default function App() {
     if (activeTabId) {
       const path = activeChatId ? `/${activeTabId}/${activeChatId}` : `/${activeTabId}`;
       if (location.pathname !== path) {
+        console.log(`[App] URL SYNC: store → navigate [${location.pathname}] → [${path}]`);
         navigate(path, { replace: true });
       }
     } else if (tabs.length === 0 && location.pathname !== '/') {
+      console.log(`[App] URL SYNC: no tabs → navigate to /`);
       navigate('/', { replace: true });
     }
   }, [activeTabId, activeChatId, tabs.length]);

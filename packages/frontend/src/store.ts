@@ -88,7 +88,7 @@ interface TabState {
   setActiveTab: (id: string) => void;
   activeTab: () => Tab | undefined;
 
-  addChat: (tabId: string, opts?: { title?: string; workDir?: string; createdAt?: number }) => string;
+  addChat: (tabId: string, opts?: { title?: string; workDir?: string; createdAt?: number; setActive?: boolean }) => string;
   removeChat: (tabId: string, chatId: string) => void;
   setActiveChat: (tabId: string, chatId: string) => void;
   updateChatSessionId: (tabId: string, chatId: string, sessionId: string) => void;
@@ -148,21 +148,25 @@ export const useTabStore = create<TabState>()(
 
       activeTab: () => get().tabs.find((t) => t.id === get().activeTabId),
 
-      addChat: (tabId: string, opts?: { title?: string; workDir?: string; createdAt?: number }) => {
+      addChat: (tabId: string, opts?: { title?: string; workDir?: string; createdAt?: number; setActive?: boolean }) => {
         const id = crypto.randomUUID();
         const num = chatCounter++;
         const createdAt = opts?.createdAt ?? Date.now();
+        const setActive = opts?.setActive ?? true; // default true for manual creation, false for auto-import
         set((s) => ({
           tabs: s.tabs.map((t) =>
             t.id === tabId
               ? {
                   ...t,
                   chats: [...t.chats, { id, title: opts?.title || `Chat ${num}`, sessionId: null, workDir: opts?.workDir || null, effort: null, permissionMode: null, model: null, createdAt, lastMessageAt: createdAt, folderId: null, pinned: false, archived: false }],
-                  activeChatId: id,
+                  activeChatId: setActive ? id : t.activeChatId,
                 }
               : t
           ),
         }));
+        if (!setActive) {
+          console.log(`[store] addChat IMPORT: [${id.slice(0,8)}] "${opts?.title || `Chat ${num}`}" (not activating — keeping [${get().tabs.find(t => t.id === tabId)?.activeChatId?.slice(0,8)}])`);
+        }
         return id;
       },
 
@@ -178,9 +182,13 @@ export const useTabStore = create<TabState>()(
         }),
       })),
 
-      setActiveChat: (tabId: string, chatId: string) => set((s) => ({
-        tabs: s.tabs.map((t) => t.id === tabId ? { ...t, activeChatId: chatId } : t),
-      })),
+      setActiveChat: (tabId: string, chatId: string) => {
+        const prev = get().tabs.find(t => t.id === tabId)?.activeChatId;
+        console.log(`[store] setActiveChat: tab=[${tabId.slice(0,8)}] prev=[${prev?.slice(0,8)}] → new=[${chatId.slice(0,8)}]`);
+        set((s) => ({
+          tabs: s.tabs.map((t) => t.id === tabId ? { ...t, activeChatId: chatId } : t),
+        }));
+      },
 
       updateChatSessionId: (tabId: string, chatId: string, sessionId: string) => set((s) => ({
         tabs: s.tabs.map((t) =>

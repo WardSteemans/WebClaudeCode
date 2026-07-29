@@ -119,8 +119,13 @@ export function startSession(opts: SessionOptions): ActiveSession {
   });
 
   proc.on('exit', (code) => {
-    if (stdoutBuffer.trim()) { processLine(stdoutBuffer); stdoutBuffer = ''; }
-    log.info(`process exited`, { sid, exitCode: code });
+    const bufferRemaining = stdoutBuffer.trim();
+    log.info(`process exited`, {
+      sid, exitCode: code,
+      bufferRemaining: bufferRemaining.length > 0 ? bufferRemaining.slice(0, 200) : '(empty)',
+      bufferLen: stdoutBuffer.length,
+    });
+    if (bufferRemaining) { processLine(stdoutBuffer); stdoutBuffer = ''; }
     opts.onExit(code);
   });
 

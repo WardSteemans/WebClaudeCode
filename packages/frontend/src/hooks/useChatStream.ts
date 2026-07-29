@@ -13,22 +13,22 @@ import { reconstructHistory } from '../lib/chat/history-reconstruction';
 
 // ==================== Module-level guards ====================
 
-/** Session IDs for which we've already attempted to load history (survives remounts).
- *  Capped at 200 entries to prevent unbounded growth in long-running sessions. */
-const historyAttempted = new Set<string>();
-const HISTORY_MAX_SIZE = 200;
-let historyInsertOrder: string[] = [];
+/** Cache for successfully loaded session histories — survives ChatPanel unmount/remount.
+ *  Uses Map for O(1) lookup. LRU-evicted at HISTORY_CACHE_MAX entries. */
+const historyCache = new Map<string, { msgs: ChatMessage[]; thinkBlocks: Map<string, ThinkingBlock> }>();
+const HISTORY_CACHE_MAX = 50;
 
-function markHistoryAttempted(sessionId: string): boolean {
-  if (historyAttempted.has(sessionId)) return true;
-  historyAttempted.add(sessionId);
-  historyInsertOrder.push(sessionId);
-  // FIFO eviction: remove oldest when over capacity
-  if (historyInsertOrder.length > HISTORY_MAX_SIZE) {
-    const oldest = historyInsertOrder.shift()!;
-    historyAttempted.delete(oldest);
+function getCachedHistory(sessionId: string) {
+  return historyCache.get(sessionId) ?? null;
+}
+
+function cacheHistory(sessionId: string, msgs: ChatMessage[], thinkBlocks: Map<string, ThinkingBlock>) {
+  // LRU eviction: remove oldest entry when at capacity
+  if (historyCache.size >= HISTORY_CACHE_MAX) {
+    const firstKey = historyCache.keys().next().value;
+    if (firstKey) historyCache.delete(firstKey);
   }
-  return false;
+  historyCache.set(sessionId, { msgs, thinkBlocks });
 }
 
 const log = createFrontendLogger('useChatStream');
@@ -78,6 +78,7 @@ export function useChatStream({
   const lastTitleGenRef = useRef(0);
   const timelineRef = useRef<StreamTimeline | null>(null);
   const imagesRef = useRef<Array<{ base64: string; mediaType: string }>>([]);
+  const filesRef = useRef<Array<{ text: string; fileName: string; mimeType: string }>>([]);
   const abortedRef = useRef(false);
   const pendingQuestionRef = useRef<{
     toolUseId: string;
@@ -106,6 +107,17 @@ export function useChatStream({
   }, []);
 
   const finalizeStream = useCallback(() => {
+    // ── Diagnostic: log stream state at finalization (for debugging cut responses) ──
+    const wasStreaming = !!streamMsgIdRef.current;
+    const contentLen = streamContentRef.current.length;
+    log.debug('finalizeStream', {
+      hadActiveMsg: wasStreaming,
+      contentLen,
+      msgCount: messages.length,
+      thinkCount: thinkingBlocks.size,
+      timerActive: !!streamTimerRef.current,
+    });
+
     // ── Timeline: log finalize BEFORE clearing refs ──
     if (timelineRef.current) {
       // Synthetic event for logging purposes
@@ -147,6 +159,11 @@ export function useChatStream({
   const resetStreamTimer = useCallback(() => {
     if (streamTimerRef.current) clearTimeout(streamTimerRef.current);
     streamTimerRef.current = setTimeout(() => {
+      log.warn('stream timer fired — timeout', {
+        hadContent: streamContentRef.current.length,
+        hadMsg: !!streamMsgIdRef.current,
+        msgCount: messages.length,
+      });
       finalizeStream();
       setMessages((prev) => [...prev, { role: 'error' as const, content: 'Timed out waiting for Claude response.', id: crypto.randomUUID(), timestamp: new Date().toISOString() }]);
     }, 120000);
@@ -193,11 +210,15 @@ export function useChatStream({
     // ── Abort guard: ignore all events after user clicked Stop ──
     if (abortedRef.current) return;
 
+    // Reset stream timer on EVERY event — Claude can spend >120s in
+    // thinking/tool phases with no text output, which would previously
+    // trigger a false timeout and cut responses mid-stream.
+    resetStreamTimer();
+
     pushEvent(event, chatId);
 
     switch (event.type) {
       case 'chat.assistant': {
-        resetStreamTimer();
         const text = (event as ChatAssistantEvent).content;
         if (!streamMsgIdRef.current) {
           const id = crypto.randomUUID();
@@ -506,7 +527,16 @@ export function useChatStream({
   const { connect, send, close } = useWebSocket({
     url: `ws://${location.host}/ws`,
     onMessage: (msg) => {
-      if ('chatId' in msg && msg.chatId !== chatId) return;
+      if ('chatId' in msg && msg.chatId !== chatId) {
+        // Message for a different chat — silently skip (logged only for assistant events to avoid noise)
+        if (msg.type === 'event') {
+          const event = msg.event as AppEvent;
+          if (event.type === 'chat.assistant' || event.type === 'session.completed' || event.type === 'session.error') {
+            console.log(`[useChatStream] WS SKIP: [${(msg.chatId as string).slice(0,8)}] ≠ ours [${chatId.slice(0,8)}] (${event.type})`);
+          }
+        }
+        return;
+      }
       if (msg.type === 'event') {
         const event = msg.event as AppEvent;
         const subagentId = msg.subagentId;
@@ -531,6 +561,7 @@ export function useChatStream({
           handleEvent(event);
         }
       } else if (msg.type === 'session_ready') {
+        console.log(`[useChatStream] SESSION READY: chat=[${chatId.slice(0,8)}] sid=[${msg.sessionId.slice(0,8)}]`);
         updateChatSessionId(tabId, chatId, msg.sessionId);
       } else if (msg.type === 'session_exit') {
         abortedRef.current = false;
@@ -584,8 +615,14 @@ export function useChatStream({
         }
       }
     },
-    onOpen: () => {},
-    onClose: () => { finalizeStream(); if (timelineRef.current) { timelineRef.current.stop(); timelineRef.current = null; } },
+    onOpen: () => {
+      console.log(`[useChatStream] WS OPEN: chat=[${chatId.slice(0,8)}]`);
+    },
+    onClose: () => {
+      console.log(`[useChatStream] WS CLOSE: chat=[${chatId.slice(0,8)}]`);
+      finalizeStream();
+      if (timelineRef.current) { timelineRef.current.stop(); timelineRef.current = null; }
+    },
   });
 
   useEffect(() => { connect(); return () => close(); }, [connect]);
@@ -619,23 +656,49 @@ export function useChatStream({
   }, [send, chatId, workDir, selectedModel]);
 
   // ── History loading ──
+  // Uses module-level cache for instant restore on chat switch (no re-fetch).
+  // Only caches on SUCCESS — failures retry on next mount.
 
   useEffect(() => {
     if (!chatSessionId || messages.length > 0 || !workDir) return;
-    if (markHistoryAttempted(chatSessionId)) return;
+
+    // Check cache first: if we've already loaded this session's history,
+    // restore it instantly without a network request.
+    const cached = getCachedHistory(chatSessionId);
+    if (cached) {
+      console.log(`[useChatStream] history CACHE HIT: sid=[${chatSessionId.slice(0,8)}] ${cached.msgs.length} msgs restored instantly`);
+      setMessages(cached.msgs);
+      setThinkingBlocks(cached.thinkBlocks);
+      const expanded = new Set<string>();
+      for (const [id] of cached.thinkBlocks) expanded.add(id);
+      setThinkingExpanded(expanded);
+      return;
+    }
+
+    console.log(`[useChatStream] history FETCH: sid=[${chatSessionId.slice(0,8)}] workDir=[${workDir}]`);
     fetch(`/api/sessions/read?base=${encodeURIComponent(workDir)}&id=${chatSessionId}`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+        return r.json();
+      })
       .then(data => {
         if (data.messages) {
           const { msgs, thinkBlocks } = reconstructHistory(data.messages);
+          cacheHistory(chatSessionId, msgs, thinkBlocks);
+          console.log(`[useChatStream] history LOADED: sid=[${chatSessionId.slice(0,8)}] ${msgs.length} msgs cached`);
           setMessages(msgs);
           setThinkingBlocks(thinkBlocks);
           const expanded = new Set<string>();
           for (const [id] of thinkBlocks) expanded.add(id);
           setThinkingExpanded(expanded);
+        } else {
+          console.log(`[useChatStream] history EMPTY: sid=[${chatSessionId.slice(0,8)}] no messages in response`);
         }
       })
-      .catch((err) => { log.warn('Failed to load session history', err instanceof Error ? { message: err.message } : undefined); });
+      .catch((err) => {
+        console.warn(`[useChatStream] history FAILED: sid=[${chatSessionId.slice(0,8)}] error=[${err instanceof Error ? err.message : String(err)}] — will retry on next mount`);
+        log.warn('Failed to load session history', err instanceof Error ? { message: err.message } : undefined);
+      });
   }, [chatSessionId, messages.length, workDir]);
 
   // ── Auto title generation ──
@@ -719,6 +782,7 @@ export function useChatStream({
   const handleSend = useCallback(() => {
     const prompt = input.trim();
     if (!prompt || isStreaming) return;
+    console.log(`[useChatStream] SEND: chat=[${chatId.slice(0,8)}] sessionId=[${chatSessionId?.slice(0,8) || 'none'}] prompt="${prompt.slice(0,60)}"`);
     abortedRef.current = false;
     setIsStreaming(true);
     setTabStatus(chatId, 'streaming');
@@ -728,21 +792,45 @@ export function useChatStream({
       activateChat(tabId, chatId);
     }
     useEventBus.getState().clearTasks();
-    // Build prompt content with images if attached
+    // Build prompt content with images + files if attached
     const images = imagesRef.current;
-    const promptContent: string | unknown[] = images.length > 0
+    const files = filesRef.current;
+    const hasImages = images.length > 0;
+    const hasFiles = files.length > 0;
+
+    // Construct the text prompt: user's message + file contents inline
+    let finalText = prompt;
+    if (hasFiles) {
+      const fileBlocks = files.map(f => `--- ${f.fileName} ---\n${f.text}\n--- end ${f.fileName} ---`).join('\n\n');
+      finalText = `${prompt}\n\nAttached files:\n\n${fileBlocks}`;
+    }
+
+    // Content array: if we have images, use Anthropic content blocks; otherwise plain text
+    const promptContent: string | unknown[] = hasImages
       ? [
-          { type: 'text', text: prompt },
+          { type: 'text', text: finalText },
           ...images.map(img => ({
             type: 'image',
             source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
           })),
         ]
-      : prompt;
-    const displayText = images.length > 0
-      ? prompt + `\n\n[${images.length} attached image${images.length > 1 ? 's' : ''}]`
-      : prompt;
-    setMessages((prev) => [...prev, { role: 'user', content: displayText, id: crypto.randomUUID(), timestamp: new Date().toISOString(), images: images.length > 0 ? images : undefined }]);
+      : finalText;
+
+    // Display text shown in the chat bubble
+    const parts: string[] = [];
+    if (hasImages) parts.push(`${images.length} image${images.length > 1 ? 's' : ''}`);
+    if (hasFiles) parts.push(`${files.length} file${files.length > 1 ? 's' : ''}`);
+    const attachmentsNote = parts.length > 0 ? `\n\n[${parts.join(' + ')} attached]` : '';
+    const displayText = prompt + attachmentsNote;
+
+    setMessages((prev) => [...prev, {
+      role: 'user',
+      content: displayText,
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      images: hasImages ? images : undefined,
+      files: hasFiles ? files.map(f => ({ text: f.text, fileName: f.fileName, mimeType: f.mimeType })) : undefined,
+    }]);
     updateChatLastMessage(tabId, chatId);
 
     const env: Record<string, string> = {};
@@ -764,6 +852,7 @@ export function useChatStream({
     });
     currentThinkingIdRef.current = null;
     imagesRef.current = [];
+    filesRef.current = [];
 
     // ── Stream Timeline: stop old, start fresh for new turn ──
     if (timelineRef.current) {
@@ -836,6 +925,8 @@ export function useChatStream({
     handleToggleThinkingExpand,
     // Image paste
     imagesRef,
+    // File attachments
+    filesRef,
     // AskUserQuestion handling
     answerQuestion,
     pendingQuestionRef,

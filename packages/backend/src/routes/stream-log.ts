@@ -4,16 +4,16 @@ import * as path from 'path';
 import { createLogger, LOG_DIR } from '../logger.js';
 
 const log = createLogger('stream-log');
+const STREAM_LOG_DIR = path.join(LOG_DIR, 'stream');
 
-// LOG_DIR imported from logger.ts – uses workspace-root/logging/
 let currentDate = '';
 let writeStream: fs.WriteStream | null = null;
 
 // ── Helpers (mirrors logger.ts pattern but keeps a separate file) ──
 
 function ensureLogDir(): void {
-  if (!fs.existsSync(LOG_DIR)) {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
+  if (!fs.existsSync(STREAM_LOG_DIR)) {
+    fs.mkdirSync(STREAM_LOG_DIR, { recursive: true });
   }
 }
 
@@ -22,7 +22,7 @@ function getStreamLogFileName(): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
-  return path.join(LOG_DIR, `cc-gui-stream-${y}-${m}-${d}.log`);
+  return path.join(STREAM_LOG_DIR, `cc-gui-stream-${y}-${m}-${d}.log`);
 }
 
 function rotateIfNeeded(): void {

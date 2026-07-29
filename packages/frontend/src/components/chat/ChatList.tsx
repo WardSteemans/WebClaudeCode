@@ -81,9 +81,14 @@ export function ChatList({ tabId, workDir }: ChatListProps) {
             title: (s.title || 'Untitled').slice(0, 30),
             workDir: s.workDir || workDir,
             createdAt: ts,
+            setActive: false, // auto-import: don't steal focus
           });
           updateChatSessionId(tabId, chatId, s.sessionId);
         }
+      })
+      .then(() => {
+        const currentTab = useTabStore.getState().tabs.find(t => t.id === tabId);
+        console.log(`[ChatList] auto-import done: ${currentTab?.chats.length ?? '?'} chats, active=[${currentTab?.activeChatId?.slice(0,8)}]`);
       })
       .catch((err) => { console.warn('Failed to load sessions', err); });
   }, [workDir, tab?.id]);
@@ -294,7 +299,7 @@ export function ChatList({ tabId, workDir }: ChatListProps) {
   const renderChatItem = (chat: Chat, level: number = 0) => (
     <div key={chat.id}>
       <div
-        onClick={() => setActiveChat(tabId, chat.id)}
+        onClick={() => { console.log(`[ChatList] CLICK: chat=[${chat.id.slice(0,8)}] "${chat.title}" (was active=[${tab.activeChatId?.slice(0,8)}])`); setActiveChat(tabId, chat.id); }}
         onContextMenu={(e) => handleContextMenu(e, chat.id)}
         className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer text-[13px] transition-colors ${
           chat.id === tab.activeChatId

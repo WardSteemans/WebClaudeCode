@@ -43,9 +43,9 @@ const PTY_DEBUG_DIR = (() => {
   const cwd = process.cwd();
   // If running from packages/backend, go up 2 levels to workspace root
   if (cwd.endsWith('packages\\backend') || cwd.endsWith('packages/backend')) {
-    return path.resolve(cwd, '..', '..', 'logging');
+    return path.resolve(cwd, '..', '..', 'logging', 'pty');
   }
-  return path.resolve(cwd, 'logging');
+  return path.resolve(cwd, 'logging', 'pty');
 })();
 const pty_debug = (sid: string, dir: string, msg: string, data?: string) => {
   try {
