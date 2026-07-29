@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import { createServer } from 'http';
 import { startSession, ActiveSession } from '../services/session-manager.js';
+import { startPtySession, PtyActiveSession, detectPromptType } from '../services/ptty-session-manager.js';
 import { parseClaudeEvent } from '../services/eventParser/index.js';
 import { createLogger } from '../logger.js';
 import type { SessionUsageEvent } from '@cc-gui/shared';
@@ -10,12 +11,14 @@ import type {
   WsClientMessage, PermissionMode, PromptMessage,
   WsOutgoingEvent, WsOutgoingSessionReady, WsOutgoingSessionExit,
   WsOutgoingAborted, WsOutgoingSubagentReady, WsOutgoingSubagentExit,
-  WsOutgoingSubagentAborted, WsOutgoingError,
+  WsOutgoingSubagentAborted, WsOutgoingError, WsOutgoingPtyData,
 } from '@cc-gui/shared';
 
 const log = createLogger('ws');
 
-const sessions = new Map<string, ActiveSession>();
+type AnyActiveSession = ActiveSession | PtyActiveSession;
+
+const sessions = new Map<string, AnyActiveSession>();
 const subSessions = new Map<string, ActiveSession>();
 
 // Per-connection heartbeat
@@ -144,11 +147,11 @@ function extractUsageFromContext(content: string, sessionId: string): SessionUsa
 
 // ── WebSocket setup ──
 
-export function setupWebSocket(server: ReturnType<typeof createServer>): { sessions: Map<string, ActiveSession>; subSessions: Map<string, ActiveSession> } {
+export function setupWebSocket(server: ReturnType<typeof createServer>): { sessions: Map<string, AnyActiveSession>; subSessions: Map<string, ActiveSession> } {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws: WebSocket) => {
-    let activeSession: ActiveSession | null = null;
+    let activeSession: AnyActiveSession | null = null;
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let isAlive = true;
 
@@ -192,40 +195,128 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
             const workDir = msg.workDir || process.cwd();
             const permissionMode: PermissionMode = msg.permissionMode || 'bypassPermissions';
             const chatId = msg._chatId || 'default';
+            const usePty = msg.usePty ?? false;
             let realSessionId: string | null = null;
 
-            const session = startSession({
-              resumeSessionId: msg.resumeSessionId,
-              workDir,
-              permissionMode,
-              env: msg.env,
-              onRawLine: (rawLine, sid) => {
-                if (ws.readyState !== WebSocket.OPEN) return;
-                for (const event of parseClaudeEvent(rawLine, sid)) {
-                  ws.send(JSON.stringify({ type: 'event', chatId, event } satisfies WsOutgoingEvent));
-                }
-              },
-              onSessionReady: (realId) => {
-                realSessionId = realId;
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'session_ready', sessionId: realId } satisfies WsOutgoingSessionReady));
-                }
-              },
-              onExit: (code) => {
-                const sid = realSessionId || session.sessionId;
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({
-                    type: 'session_exit', sessionId: sid, exitCode: code,
-                  } satisfies WsOutgoingSessionExit));
-                }
-                sessions.delete(session.sessionId);
-                if (activeSession?.sessionId === session.sessionId) activeSession = null;
-              },
-            });
+            if (usePty) {
+              // ── PTY (interactive TUI) mode ──
+              const ptySession = startPtySession({
+                resumeSessionId: msg.resumeSessionId,
+                workDir,
+                permissionMode,
+                env: msg.env,
+                onData: (rawData, sid) => {
+                  if (ws.readyState !== WebSocket.OPEN) return;
+                  const { isApproval, isQuestion } = detectPromptType(rawData);
+                  const ptyMsg: WsOutgoingPtyData = {
+                    type: 'pty_data', chatId, sessionId: sid,
+                    data: rawData,
+                    approvalDetected: isApproval || undefined,
+                    questionDetected: isQuestion || undefined,
+                  };
+                  log.debug('pty_data → frontend', { sid: sid.slice(0,8), len: rawData.length, isApproval, isQuestion });
+                  ws.send(JSON.stringify(ptyMsg));
+                },
+                onSessionReady: (realId) => {
+                  realSessionId = realId;
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'session_ready', sessionId: realId } satisfies WsOutgoingSessionReady));
+                  }
+                },
+                onExit: (code) => {
+                  const sid = realSessionId || ptySession.sessionId;
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                      type: 'session_exit', sessionId: sid, exitCode: code,
+                    } satisfies WsOutgoingSessionExit));
+                  }
+                  sessions.delete(ptySession.sessionId);
+                  if (activeSession?.sessionId === ptySession.sessionId) activeSession = null;
+                },
+              });
 
-            sessions.set(session.sessionId, session);
-            activeSession = session;
-            if (msg.prompt) session.sendPrompt(msg.prompt as string | unknown[]);
+              sessions.set(ptySession.sessionId, ptySession);
+              activeSession = ptySession;
+              if (msg.prompt) ptySession.sendPrompt(msg.prompt as string);
+            } else {
+              // ── Stream-JSON mode (original) ──
+              const session = startSession({
+                resumeSessionId: msg.resumeSessionId,
+                workDir,
+                permissionMode,
+                env: msg.env,
+                onRawLine: (rawLine, sid) => {
+                  if (ws.readyState !== WebSocket.OPEN) return;
+                  for (const event of parseClaudeEvent(rawLine, sid)) {
+                    ws.send(JSON.stringify({ type: 'event', chatId, event } satisfies WsOutgoingEvent));
+                  }
+                },
+                onSessionReady: (realId) => {
+                  realSessionId = realId;
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'session_ready', sessionId: realId } satisfies WsOutgoingSessionReady));
+                  }
+                },
+                onExit: (code) => {
+                  const sid = realSessionId || session.sessionId;
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                      type: 'session_exit', sessionId: sid, exitCode: code,
+                    } satisfies WsOutgoingSessionExit));
+                  }
+                  sessions.delete(session.sessionId);
+                  if (activeSession?.sessionId === session.sessionId) activeSession = null;
+                },
+              });
+
+              sessions.set(session.sessionId, session);
+              activeSession = session;
+              if (msg.prompt) session.sendPrompt(msg.prompt as string | unknown[]);
+            }
+            break;
+          }
+
+          // ── Permission: approve (PTY mode) ──
+          case 'permission:approve': {
+            const pty = activeSession as PtyActiveSession | null;
+            if (pty && 'sendKeystroke' in pty) {
+              pty.sendKeystroke('y');
+              log.info('permission:approve → sent "y"', { sessionId: pty.sessionId.slice(0, 8) });
+            }
+            break;
+          }
+
+          // ── Permission: deny (PTY mode) ──
+          case 'permission:deny': {
+            const pty = activeSession as PtyActiveSession | null;
+            if (pty && 'sendKeystroke' in pty) {
+              pty.sendKeystroke('n');
+              log.info('permission:deny → sent "n"', { sessionId: pty.sessionId.slice(0, 8) });
+            }
+            break;
+          }
+
+          // ── Tool result: send answer to stream-json session's stdin ──
+          case 'tool:result': {
+            const session = activeSession as ActiveSession | null;
+            if (session && 'sendStdin' in session) {
+              const toolResultMsg = {
+                type: 'user',
+                message: {
+                  role: 'user',
+                  content: [{
+                    type: 'tool_result',
+                    tool_use_id: msg.toolUseId,
+                    content: msg.content,
+                  }],
+                },
+              };
+              session.sendStdin(toolResultMsg);
+              log.info('tool:result → stdin', {
+                toolUseId: msg.toolUseId.slice(0, 12),
+                answerLen: msg.content.length,
+              });
+            }
             break;
           }
 

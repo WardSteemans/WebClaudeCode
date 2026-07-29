@@ -45,6 +45,8 @@ export interface ToolStartedEvent extends BaseEvent {
   type: 'tool.started';
   toolName: string;
   toolInput: Record<string, unknown>;
+  /** Claude Code's internal tool_use_id — needed to send tool_result responses */
+  toolUseId?: string;
   /** Optional: which files are affected */
   files?: string[];
 }

@@ -4,5 +4,6 @@ export * from './types';
 export * from './ws-messages';
 export * from './chat';
 export * from './logger';
+export * from './stream-timeline';
 export * from './utils/deep-object';
 export * from './utils/format';

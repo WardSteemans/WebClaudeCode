@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import type { LogLevel, BaseLogger } from '@cc-gui/shared';
 
 // Re-export for external consumers
@@ -17,9 +18,33 @@ interface LogEntry {
   stepPhase?: 'begin' | 'end' | 'error';
 }
 
+// ── Resolve workspace root ──
+// Walks up from this file's location until it finds package.json with "workspaces".
+// Falls back to 3 levels up (standard monorepo layout: packages/backend/src → root).
+
+function findWorkspaceRoot(): string {
+  const __filename = fileURLToPath(import.meta.url);
+  let dir = path.dirname(__filename);
+  for (let i = 0; i < 10; i++) {
+    const pkgPath = path.join(dir, 'package.json');
+    try {
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        if (pkg.workspaces) return dir;
+      }
+    } catch { /* keep walking */ }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fallback for unusual layouts
+  return path.resolve(path.dirname(__filename), '..', '..', '..');
+}
+
 // ── State ──
 
-const LOG_DIR = path.join(process.cwd(), 'logs');
+const WORKSPACE_ROOT = findWorkspaceRoot();
+const LOG_DIR = path.join(WORKSPACE_ROOT, 'logging');
 let currentDate = '';
 let writeStream: fs.WriteStream | null = null;
 let buffer: string[] = [];
@@ -148,6 +173,39 @@ function writeEntry(entry: LogEntry): void {
   }
 }
 
+// ── Dedicated log files ──
+// Writes a copy of an entry to logs/<name>-YYYY-MM-DD.log.
+// Uses appendFileSync for simplicity (dedicated logs are low-volume).
+
+function writeDedicatedEntry(name: string, entry: LogEntry): void {
+  try {
+    ensureLogDir();
+    const now = new Date();
+    const y = now.getFullYear();
+    const mo = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const fileName = path.join(LOG_DIR, `${name}-${y}-${mo}-${d}.log`);
+
+    // Use same format as main log for consistency
+    const line = formatEntry(entry);
+    fs.appendFileSync(fileName, line, 'utf-8');
+  } catch {
+    // Never let dedicated log failures affect the application
+  }
+}
+
+// Also export so external code (e.g. log.ts route) can write to dedicated logs
+function appendToDedicatedLog(name: string, module: string, level: LogLevel, message: string, data?: Record<string, unknown>, error?: string): void {
+  writeDedicatedEntry(name, {
+    timestamp: formatTimestamp(),
+    level,
+    module,
+    message,
+    data,
+    error,
+  });
+}
+
 // ── Logger interface ──
 
 export interface Logger extends BaseLogger {
@@ -172,14 +230,14 @@ export interface PerfMark {
 
 const activeMarks = new Map<string, number>();
 
-function createLogger(module: string): Logger {
+function createLogger(module: string, dedicatedLog?: string): Logger {
   // Ensure stream and flush timer are started on first logger creation
   ensureStream();
   startFlushTimer();
 
   const log = (level: LogLevel, message: string, data?: Record<string, unknown>, error?: string, step?: string, stepPhase?: 'begin' | 'end' | 'error', durationMs?: number) => {
     rotateIfNeeded();
-    writeEntry({
+    const entry: LogEntry = {
       timestamp: formatTimestamp(),
       level,
       module,
@@ -189,7 +247,13 @@ function createLogger(module: string): Logger {
       step,
       stepPhase,
       durationMs,
-    });
+    };
+    writeEntry(entry);
+
+    // Also write to dedicated log file if requested
+    if (dedicatedLog) {
+      writeDedicatedEntry(dedicatedLog, entry);
+    }
   };
 
   return {
@@ -258,7 +322,7 @@ const defaultLogger = createLogger('app');
 export const log = defaultLogger;
 
 // Re-export factory
-export { createLogger };
+export { createLogger, appendToDedicatedLog, LOG_DIR };
 
 // ── Shutdown ──
 

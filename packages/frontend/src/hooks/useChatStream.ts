@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { AppEvent, ChatAssistantEvent, ChatThinkingEvent, ChatErrorEvent, ToolStartedEvent, ToolCompletedEvent, FileEvent, FileChangedEvent, SessionCompactedEvent } from '@cc-gui/shared';
+import { StreamTimeline } from '@cc-gui/shared';
 import { useTabStore } from '../store';
 import { useEventBus } from '../store/eventBus';
 import { useSettingsStore, ALL_MODELS } from '../store/settingsStore';
@@ -75,7 +76,14 @@ export function useChatStream({
   const clickTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const thinkingBlocksRef = useRef<Map<string, ThinkingBlock>>(new Map());
   const lastTitleGenRef = useRef(0);
+  const timelineRef = useRef<StreamTimeline | null>(null);
   const imagesRef = useRef<Array<{ base64: string; mediaType: string }>>([]);
+  const abortedRef = useRef(false);
+  const pendingQuestionRef = useRef<{
+    toolUseId: string;
+    question: string;
+    options: Array<{ label: string; description: string }>;
+  } | null>(null);
 
   // Keep ref in sync for callbacks that read thinkingBlocks without re-subscribing
   useEffect(() => { thinkingBlocksRef.current = thinkingBlocks; }, [thinkingBlocks]);
@@ -98,6 +106,19 @@ export function useChatStream({
   }, []);
 
   const finalizeStream = useCallback(() => {
+    // ── Timeline: log finalize BEFORE clearing refs ──
+    if (timelineRef.current) {
+      // Synthetic event for logging purposes
+      const synthEvent = { id: 'finalize', type: 'stream.finalize', sessionId: chatSessionId || '' };
+      timelineRef.current.recordProcess(synthEvent, {
+        action: 'finalize_stream',
+        streamMsgIdRef: streamMsgIdRef.current,
+        currentThinkingIdRef: currentThinkingIdRef.current,
+        messageCount: messages.length,
+        thinkingBlockCount: thinkingBlocks.size,
+      });
+    }
+
     streamMsgIdRef.current = null;
     streamContentRef.current = '';
     stopThinkingTimer();
@@ -169,6 +190,9 @@ export function useChatStream({
   // ── Event handler (for WebSocket events) ──
 
   const handleEvent = useCallback((event: AppEvent) => {
+    // ── Abort guard: ignore all events after user clicked Stop ──
+    if (abortedRef.current) return;
+
     pushEvent(event, chatId);
 
     switch (event.type) {
@@ -181,8 +205,19 @@ export function useChatStream({
           streamContentRef.current = text;
           updateChatLastMessage(tabId, chatId);
           setMessages((prev) => [...prev, { role: 'assistant', content: text, id, timestamp: new Date().toISOString() }]);
+          timelineRef.current?.recordProcess(event, {
+            action: 'new_message',
+            targetMsgId: id,
+            streamMsgIdRef: id,
+            currentThinkingIdRef: currentThinkingIdRef.current,
+          });
         } else {
           appendToStream(text);
+          timelineRef.current?.recordProcess(event, {
+            action: 'append_message',
+            targetMsgId: streamMsgIdRef.current,
+            currentThinkingIdRef: currentThinkingIdRef.current,
+          });
         }
         break;
       }
@@ -212,20 +247,36 @@ export function useChatStream({
               return next;
             });
           }, 1000);
+          timelineRef.current?.recordProcess(event, {
+            action: 'new_block',
+            targetBlockId: id,
+            targetSegmentId: segId,
+            currentThinkingIdRef: id,
+          });
         } else {
+          // Determine whether this appends to last segment or creates new
+          const block = thinkingBlocksRef.current.get(currentThinkingIdRef.current!);
+          const lastSeg = block?.segments[block.segments.length - 1];
+          const isAppend = lastSeg?.kind === 'thinking';
+
           setThinkingBlocks((prev) => {
             const next = new Map(prev);
-            const block = next.get(currentThinkingIdRef.current!);
-            if (!block) return next;
-            const segs = [...block.segments];
+            const b = next.get(currentThinkingIdRef.current!);
+            if (!b) return next;
+            const segs = [...b.segments];
             const last = segs[segs.length - 1];
             if (last && last.kind === 'thinking') {
               segs[segs.length - 1] = { ...last, text: last.text + e.content };
             } else {
               segs.push({ id: crypto.randomUUID(), kind: 'thinking', text: e.content, summary: '' });
             }
-            next.set(currentThinkingIdRef.current!, { ...block, segments: segs });
+            next.set(currentThinkingIdRef.current!, { ...b, segments: segs });
             return next;
+          });
+          timelineRef.current?.recordProcess(event, {
+            action: isAppend ? 'append_segment' : 'new_segment',
+            targetBlockId: currentThinkingIdRef.current,
+            currentThinkingIdRef: currentThinkingIdRef.current,
           });
         }
         break;
@@ -252,6 +303,33 @@ export function useChatStream({
           next.set(id, { ...block, segments: segs });
           return next;
         });
+        timelineRef.current?.recordProcess(event, {
+          action: 'tool_started',
+          targetBlockId: currentThinkingIdRef.current,
+          targetSegmentId: toolId,
+          currentThinkingIdRef: currentThinkingIdRef.current,
+        });
+
+        // ── Detect AskUserQuestion: show answer UI ──
+        if (e.toolUseId && /AskUserQuestion|question/i.test(e.toolName)) {
+          const qInput = e.toolInput as {
+            question?: string;
+            options?: Array<{ label: string; description: string }>;
+          };
+          const question = qInput.question || JSON.stringify(e.toolInput);
+          const options = qInput.options || [];
+          pendingQuestionRef.current = { toolUseId: e.toolUseId, question, options };
+
+          const optsText = options.length > 0
+            ? '\n' + options.map((o, i) => `  ${i + 1}. ${o.label}${o.description ? ' — ' + o.description : ''}`).join('\n')
+            : '';
+          setMessages((prev) => [...prev, {
+            id: crypto.randomUUID(),
+            role: 'system' as const,
+            content: `❓ ${question}${optsText}\n\n_Reply with your answer below_`,
+            timestamp: new Date().toISOString(),
+          }]);
+        }
         break;
       }
 
@@ -317,6 +395,11 @@ export function useChatStream({
             return next;
           });
         }
+        timelineRef.current?.recordProcess(event, {
+          action: 'tool_completed',
+          targetBlockId: currentThinkingIdRef.current,
+          currentThinkingIdRef: currentThinkingIdRef.current,
+        });
         break;
       }
 
@@ -337,6 +420,11 @@ export function useChatStream({
           }
           next.set(id, { ...block, segments: segs });
           return next;
+        });
+        timelineRef.current?.recordProcess(event, {
+          action: 'file_event',
+          targetBlockId: currentThinkingIdRef.current,
+          currentThinkingIdRef: currentThinkingIdRef.current,
         });
         break;
       }
@@ -360,6 +448,11 @@ export function useChatStream({
           next.set(id, { ...block, segments: segs });
           return next;
         });
+        timelineRef.current?.recordProcess(event, {
+          action: 'file_event',
+          targetBlockId: currentThinkingIdRef.current,
+          currentThinkingIdRef: currentThinkingIdRef.current,
+        });
         break;
       }
 
@@ -376,6 +469,7 @@ export function useChatStream({
         }
         if (parts.length > 0) msg += ' — ' + parts.join(', ');
         setMessages((prev) => [...prev, { role: 'system' as const, content: msg, id: crypto.randomUUID(), timestamp: new Date().toISOString() }]);
+        timelineRef.current?.recordProcess(event, { action: 'compacted' });
         break;
       }
 
@@ -391,6 +485,7 @@ export function useChatStream({
         } else if (event.type === 'session.aborted') {
           setMessages((prev) => [...prev, { role: 'system', content: 'Generation aborted.', id: crypto.randomUUID(), timestamp: new Date().toISOString() }]);
         }
+        timelineRef.current?.recordProcess(event, { action: event.type.replace('session.', '') });
         break;
       }
 
@@ -399,6 +494,7 @@ export function useChatStream({
         finalizeStream();
         const err = event as ChatErrorEvent;
         setMessages((prev) => [...prev, { role: 'error', content: err.message, id: crypto.randomUUID(), timestamp: new Date().toISOString() }]);
+        timelineRef.current?.recordProcess(event, { action: 'error' });
         break;
       }
     }
@@ -412,16 +508,35 @@ export function useChatStream({
     onMessage: (msg) => {
       if ('chatId' in msg && msg.chatId !== chatId) return;
       if (msg.type === 'event') {
-        if (msg.subagentId) {
-          useSubagentStore.getState().pushEvent(msg.subagentId, msg.event as AppEvent);
+        const event = msg.event as AppEvent;
+        const subagentId = msg.subagentId;
+
+        // ── Stream Timeline: init on first event ──
+        if (!timelineRef.current) {
+          timelineRef.current = new StreamTimeline(event.sessionId, chatId);
+          timelineRef.current.start();
+        }
+
+        // ── Timeline: record backend send (using _sentAt from WS envelope) ──
+        if (msg._sentAt) {
+          timelineRef.current.recordSend(event, chatId, subagentId);
+        }
+
+        // ── Timeline: record frontend receive ──
+        timelineRef.current.recordRecv(event, chatId, subagentId);
+
+        if (subagentId) {
+          useSubagentStore.getState().pushEvent(subagentId, event);
         } else {
-          handleEvent(msg.event as AppEvent);
+          handleEvent(event);
         }
       } else if (msg.type === 'session_ready') {
         updateChatSessionId(tabId, chatId, msg.sessionId);
       } else if (msg.type === 'session_exit') {
+        abortedRef.current = false;
         finalizeStream();
       } else if (msg.type === 'aborted') {
+        abortedRef.current = false;
         finalizeStream();
         setMessages((prev) => [...prev, { role: 'system', content: 'Generation aborted.', id: crypto.randomUUID(), timestamp: new Date().toISOString() }]);
       } else if (msg.type === 'subagent_ready') {
@@ -430,10 +545,47 @@ export function useChatStream({
         useSubagentStore.getState().markExit(msg.subagentId, msg.exitCode);
       } else if (msg.type === 'subagent_aborted') {
         useSubagentStore.getState().markExit(msg.subagentId, -1);
+      } else if (msg.type === 'pty_data') {
+        // PTY mode: append raw terminal output as a message
+        // Strip ALL ANSI escape sequences (ECMA-48 compliant).
+        // CSI: ESC [ <parameter bytes 0x30-3F> <intermediate bytes 0x20-2F> <final byte 0x40-7E>
+        // OSC: ESC ] ... BEL or ESC \
+        // Remaining single-char escapes and control chars.
+        const stripAllAnsi = (raw: string): string =>
+          raw
+            .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '')
+            .replace(/\x1b\][^\x07]*\x07/g, '')
+            .replace(/\x1b\][^\x1b]*\x1b\\/g, '')
+            .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
+            .replace(/\x1b[=>]|[\x7f]/g, '');
+        const plainText = stripAllAnsi(msg.data).trim();
+        log.debug('pty_data received', { len: msg.data.length, plainLen: plainText.length, approval: msg.approvalDetected, question: msg.questionDetected, preview: plainText.slice(0, 100) });
+        if (plainText) {
+          setMessages((prev) => {
+            // Try to append to the last system message if recently updated
+            const last = prev[prev.length - 1];
+            const now = Date.now();
+            if (last && last.role === 'system' && last.timestamp && (now - new Date(last.timestamp).getTime() < 2000)) {
+              const updated = [...prev];
+              updated[updated.length - 1] = { ...last, content: last.content + '\n' + plainText };
+              return updated;
+            }
+            return [...prev, {
+              id: crypto.randomUUID(),
+              role: 'system' as const,
+              content: plainText,
+              timestamp: new Date().toISOString(),
+            }];
+          });
+        }
+        // If approval is detected, auto-flash or highlight in the UI
+        if (msg.approvalDetected || msg.questionDetected) {
+          setTabStatus(chatId, 'streaming');
+        }
       }
     },
     onOpen: () => {},
-    onClose: () => { finalizeStream(); },
+    onClose: () => { finalizeStream(); if (timelineRef.current) { timelineRef.current.stop(); timelineRef.current = null; } },
   });
 
   useEffect(() => { connect(); return () => close(); }, [connect]);
@@ -506,6 +658,9 @@ export function useChatStream({
       env.CLAUDE_CODE_EFFORT_LEVEL = selectedEffort;
     }
 
+    const hasKey = !!env.ANTHROPIC_API_KEY;
+    log.debug('generateChatTitle: starting', { model: env.ANTHROPIC_MODEL, hasKey, baseUrl: env.ANTHROPIC_BASE_URL, msgCount: messages.length });
+
     try {
       const res = await fetch('/api/chats/generate-title', {
         method: 'POST',
@@ -515,11 +670,16 @@ export function useChatStream({
       if (res.ok) {
         const data = await res.json();
         if (data.title) {
+          log.info('generateChatTitle: title set', { title: data.title });
           updateChatTitle(tabId, chatId, data.title);
+        } else {
+          log.warn('generateChatTitle: response missing title', data);
         }
+      } else {
+        log.warn('generateChatTitle: API returned non-ok', { status: res.status });
       }
-    } catch {
-      // Silently fail — titles are non-critical
+    } catch (err) {
+      log.warn('generateChatTitle: fetch failed', err instanceof Error ? { message: err.message } : undefined);
     }
   }, [messages, workDir, selectedModel, selectedEffort, tabId, chatId, updateChatTitle]);
 
@@ -529,7 +689,12 @@ export function useChatStream({
     if (!hasSentRef.current) return;
 
     const state = useSettingsStore.getState();
-    if (!state.autoTitleEnabled || !state.autoTitleTiers.length) return;
+    if (!state.autoTitleEnabled || !state.autoTitleTiers.length) {
+      if (hasSentRef.current && messages.length >= 2) {
+        log.debug('generateChatTitle: disabled by settings', { autoTitleEnabled: state.autoTitleEnabled, tiersLength: state.autoTitleTiers.length });
+      }
+      return;
+    }
 
     const meaningfulCount = messages.filter(m => m.role === 'user' || m.role === 'assistant').length;
     if (meaningfulCount < 2) return;
@@ -543,6 +708,7 @@ export function useChatStream({
       : meaningfulCount >= lastTitleGenRef.current + currentInterval;
 
     if (thresholdReached) {
+      log.debug('generateChatTitle: threshold reached', { meaningfulCount, isFirstGen, currentInterval, lastGen: lastTitleGenRef.current });
       lastTitleGenRef.current = meaningfulCount;
       generateChatTitle();
     }
@@ -553,6 +719,7 @@ export function useChatStream({
   const handleSend = useCallback(() => {
     const prompt = input.trim();
     if (!prompt || isStreaming) return;
+    abortedRef.current = false;
     setIsStreaming(true);
     setTabStatus(chatId, 'streaming');
     setInput('');
@@ -593,10 +760,32 @@ export function useChatStream({
       env: Object.keys(env).length > 0 ? env : undefined,
       resumeSessionId: chatSessionId,
       _chatId: chatId,
+      usePty: false, // Stream-json mode: structured events + interactive stdin for questions
     });
     currentThinkingIdRef.current = null;
     imagesRef.current = [];
+
+    // ── Stream Timeline: stop old, start fresh for new turn ──
+    if (timelineRef.current) {
+      timelineRef.current.stop();
+      timelineRef.current = null;
+    }
   }, [input, isStreaming, chatId, tabId, workDir, permissionMode, selectedModel, selectedEffort, chatSessionId, resetStreamTimer, send, setTabStatus, activateChat, updateChatLastMessage]);
+
+  // ── Answer a pending AskUserQuestion ──
+
+  const answerQuestion = useCallback((answer: string) => {
+    const pending = pendingQuestionRef.current;
+    if (!pending) return;
+    log.info('answering question', { toolUseId: pending.toolUseId.slice(0, 12), answerLen: answer.length });
+    send({
+      type: 'tool:result',
+      sessionId: chatSessionId || '',
+      toolUseId: pending.toolUseId,
+      content: answer,
+    });
+    pendingQuestionRef.current = null;
+  }, [send, chatSessionId]);
 
   // ── Thinking block expand handler (placed here to access setThinkingExpanded / setCollapsedSegments) ──
 
@@ -637,11 +826,18 @@ export function useChatStream({
     thinkingBlocksRef,
     // Actions
     handleSend,
-    abort: () => send({ type: 'abort' }),
+    abort: () => {
+      abortedRef.current = true;
+      send({ type: 'abort' });
+    },
+    sendWs: send,
     handleSegmentClick,
     isSegmentCollapsed,
     handleToggleThinkingExpand,
     // Image paste
     imagesRef,
+    // AskUserQuestion handling
+    answerQuestion,
+    pendingQuestionRef,
   };
 }

@@ -15,6 +15,8 @@ export interface PromptMessage {
   provider?: string;
   model?: string;
   _chatId?: string;
+  /** Use interactive PTY mode (default=false). Only needed for initial trust/API-key prompts. */
+  usePty?: boolean;
 }
 
 export interface AbortMessage {
@@ -35,11 +37,36 @@ export interface SubagentAbortMessage {
   subagentId?: string;
 }
 
+export interface PermissionApproveMessage {
+  type: 'permission:approve';
+  sessionId: string;
+  /** Optional: modified tool input to send back */
+  updatedInput?: Record<string, unknown>;
+}
+
+export interface PermissionDenyMessage {
+  type: 'permission:deny';
+  sessionId: string;
+  message?: string;
+}
+
+/** Send a tool_result to Claude Code's stdin (stream-json mode).
+ *  Used for answering AskUserQuestion and other interactive tool prompts. */
+export interface ToolResultMessage {
+  type: 'tool:result';
+  sessionId: string;
+  toolUseId: string;
+  content: string;
+}
+
 export type WsClientMessage =
   | PromptMessage
   | AbortMessage
   | SubagentStartMessage
-  | SubagentAbortMessage;
+  | SubagentAbortMessage
+  | PermissionApproveMessage
+  | PermissionDenyMessage
+  | ToolResultMessage;
 
 // ==================== Server → Client ====================
 
@@ -48,6 +75,9 @@ export interface WsOutgoingEvent {
   chatId: string;
   subagentId?: string;
   event: unknown; // AppEvent — typed as unknown to avoid circular deps; consumers cast as needed
+  /** Epoch-ms timestamp set by backend just before ws.send().
+   *  Used by the frontend's StreamTimeline to log the backend:send phase. */
+  _sentAt?: number;
 }
 
 export interface WsOutgoingSessionReady {
@@ -63,6 +93,18 @@ export interface WsOutgoingSessionExit {
 
 export interface WsOutgoingAborted {
   type: 'aborted';
+}
+
+export interface WsOutgoingPtyData {
+  type: 'pty_data';
+  chatId: string;
+  sessionId: string;
+  /** Raw terminal output from the PTY */
+  data: string;
+  /** True when an approval/permission prompt is detected in this chunk */
+  approvalDetected?: boolean;
+  /** True when a question/interactive prompt is detected in this chunk */
+  questionDetected?: boolean;
 }
 
 export interface WsOutgoingSubagentReady {
@@ -95,6 +137,7 @@ export type WsOutgoingMessage =
   | WsOutgoingSessionReady
   | WsOutgoingSessionExit
   | WsOutgoingAborted
+  | WsOutgoingPtyData
   | WsOutgoingSubagentReady
   | WsOutgoingSubagentExit
   | WsOutgoingSubagentAborted

@@ -106,7 +106,7 @@ export function* parseStreamEvent(evt: RawStreamEvent, sessionId: string, s: Par
         try { if (stream.pendingTool.inputJson) toolInput = JSON.parse(stream.pendingTool.inputJson); } catch {}
 
         const t = stream.pendingTool;
-        yield* emitToolStarted(t.name, toolInput, sessionId);
+        yield* emitToolStarted(t.name, toolInput, sessionId, t.id);
 
         // Also set legacy tool tracker for matching tool_result later
         s.currentTool = { name: t.name, input: toolInput, startTime: t.startTime };

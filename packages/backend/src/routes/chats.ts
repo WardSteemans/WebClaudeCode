@@ -1,5 +1,10 @@
 import express from 'express';
+import * as http from 'http';
 import * as https from 'https';
+import { createLogger } from '../logger.js';
+import { getSettings } from '../data/db.js';
+
+const log = createLogger('chats', 'title-gen');
 
 interface ChatMessage {
   role: string;
@@ -29,12 +34,19 @@ export function registerChatsRoutes(app: express.Express): void {
 
     const apiKey = env?.ANTHROPIC_API_KEY;
     if (!apiKey) {
+      log.info('generate-title: no ANTHROPIC_API_KEY in env, using fallback');
       return res.json({ title: generateFallbackTitle(messages) });
     }
 
     const rawBase = (env?.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, '');
     const url = new URL('/v1/messages', rawBase);
     const model = env?.ANTHROPIC_MODEL || 'claude-3-5-haiku-20241022';
+    const isHttp = url.protocol === 'http:';
+
+    // Mirror api-router TLS setting for corporate proxies that intercept TLS
+    const insecureTls = getSettings().apiRouterInsecureTls === 'true';
+
+    log.debug('generate-title: calling AI API', { baseUrl: rawBase, model, msgCount: messages.length, isHttp, insecureTls });
 
     // Build conversation summary
     const conversationText = messages
@@ -53,9 +65,9 @@ export function registerChatsRoutes(app: express.Express): void {
       }],
     });
 
-    const reqOpts: https.RequestOptions = {
+    const reqOpts: http.RequestOptions = {
       hostname: url.hostname,
-      port: url.port || 443,
+      port: url.port || (isHttp ? 80 : 443),
       path: url.pathname,
       method: 'POST',
       headers: {
@@ -65,13 +77,17 @@ export function registerChatsRoutes(app: express.Express): void {
         'content-length': Buffer.byteLength(body),
       },
       timeout: 15000,
+      ...(insecureTls ? { rejectUnauthorized: false } : {}),
     };
 
-    const apiReq = https.request(reqOpts, (apiRes) => {
+    const transport = isHttp ? http : https;
+
+    const apiReq = transport.request(reqOpts, (apiRes) => {
       let data = '';
       apiRes.on('data', (chunk: Buffer) => { data += chunk.toString(); });
       apiRes.on('end', () => {
         if (apiRes.statusCode !== 200) {
+          log.warn('generate-title: AI API non-200', { statusCode: apiRes.statusCode });
           return res.json({ title: generateFallbackTitle(messages) });
         }
         try {
@@ -84,16 +100,28 @@ export function registerChatsRoutes(app: express.Express): void {
               .join('');
           }
           title = title.replace(/^["'\s]+|["'\s]+$/g, '').trim();
-          if (!title || title.length > 100) title = generateFallbackTitle(messages);
+          if (!title || title.length > 100) {
+            log.debug('generate-title: AI returned empty or too-long title, using fallback', { rawTitle: title });
+            title = generateFallbackTitle(messages);
+          }
+          log.info('generate-title: success', { title });
           res.json({ title });
-        } catch {
+        } catch (err) {
+          log.warn('generate-title: failed to parse AI response, using fallback', err instanceof Error ? { message: err.message } : undefined);
           res.json({ title: generateFallbackTitle(messages) });
         }
       });
     });
 
-    apiReq.on('error', () => { /* silent — titles are non-critical */ });
-    apiReq.on('timeout', () => { apiReq.destroy(); if (!res.headersSent) res.json({ title: generateFallbackTitle(messages) }); });
+    apiReq.on('error', (err) => {
+      log.warn('generate-title: AI API request error, using fallback', { message: err.message });
+      if (!res.headersSent) res.json({ title: generateFallbackTitle(messages) });
+    });
+    apiReq.on('timeout', () => {
+      log.warn('generate-title: AI API request timeout, using fallback');
+      apiReq.destroy();
+      if (!res.headersSent) res.json({ title: generateFallbackTitle(messages) });
+    });
     apiReq.write(body);
     apiReq.end();
   });

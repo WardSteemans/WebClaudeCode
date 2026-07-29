@@ -14,10 +14,11 @@ import { registerMetricsRoutes } from './routes/metrics.js';
 import { registerTabStateRoutes } from './routes/tab-state.js';
 import { registerChatsRoutes } from './routes/chats.js';
 import { registerLogRoutes } from './routes/log.js';
+import { registerStreamLogRoutes } from './routes/stream-log.js';
 
 const log = createLogger('server');
 
-const PORT = parseInt(process.env.PORT ?? '', 10) || 3001;
+const PORT = parseInt(process.env.PORT ?? '', 10) || 3002;
 
 const app = express();
 
@@ -61,6 +62,7 @@ registerMetricsRoutes(app);
 registerTabStateRoutes(app);
 registerChatsRoutes(app);
 registerLogRoutes(app);
+registerStreamLogRoutes(app);
 
 // ── WebSocket ──
 
