@@ -126,7 +126,7 @@ export function startSession(opts: SessionOptions): ActiveSession {
       type: 'user',
       message: { role: 'user', content },
     }) + '\n';
-    console.log(`[session] sending prompt bytes=${message.length} hasImages=${isArray}`);
+    log.info(`sending prompt`, { sid, bytes: message.length, hasImages: isArray });
     proc.stdin!.write(message);
     proc.stdin!.end();
   };
