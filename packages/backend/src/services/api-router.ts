@@ -364,6 +364,11 @@ function forwardToUpstream(
     onDone(504, 0, 'timeout');
   });
 
+  // ── Abort upstream when the CLI connection drops (e.g. session killed) ──
+  res.on('close', () => {
+    upstreamReq.destroy();
+  });
+
   upstreamReq.write(body);
   upstreamReq.end();
 }

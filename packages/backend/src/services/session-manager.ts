@@ -39,6 +39,11 @@ export interface ActiveSession {
   workDir: string;
   process: ChildProcess;
   sendPrompt: (prompt: string | unknown[]) => void;
+  /** Send an arbitrary NDJSON message to Claude Code's stdin.
+   *  Used for tool_result responses (e.g. answering AskUserQuestion). */
+  sendStdin: (message: unknown) => void;
+  /** Close stdin — signals Claude Code that no more input is coming. */
+  closeStdin: () => void;
   abort: () => void;
 }
 
@@ -128,10 +133,22 @@ export function startSession(opts: SessionOptions): ActiveSession {
     }) + '\n';
     log.info(`sending prompt`, { sid, bytes: message.length, hasImages: isArray });
     proc.stdin!.write(message);
-    proc.stdin!.end();
+    // stdin stays open — Claude Code may send follow-up questions (AskUserQuestion)
+    // that require tool_result responses before the turn completes.
+  };
+
+  const sendStdin = (message: unknown) => {
+    const msg = JSON.stringify(message) + '\n';
+    log.debug(`sending stdin`, { sid, preview: msg.slice(0, 200) });
+    proc.stdin!.write(msg);
+  };
+
+  const closeStdin = () => {
+    log.debug(`closing stdin`, { sid });
+    try { proc.stdin!.end(); } catch { /* stdin may already be closed */ }
   };
 
   const abort = () => { proc.kill('SIGTERM'); };
 
-  return { sessionId, workDir: opts.workDir, process: proc, sendPrompt, abort };
+  return { sessionId, workDir: opts.workDir, process: proc, sendPrompt, sendStdin, closeStdin, abort };
 }

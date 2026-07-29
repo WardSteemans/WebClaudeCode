@@ -10,6 +10,77 @@ import { ChatToolbar } from './ChatToolbar';
 import { PromptInput } from './PromptInput';
 import { FolderPicker } from '../files/FolderPicker';
 
+// ==================== Question Answer Bar ====================
+
+interface QuestionAnswerBarProps {
+  question: string;
+  options: Array<{ label: string; description: string }>;
+  onSubmit: (answer: string) => void;
+}
+
+function QuestionAnswerBar({ question, options, onSubmit }: QuestionAnswerBarProps) {
+  const [text, setText] = useState('');
+
+  const handleClickOption = (label: string) => {
+    onSubmit(label);
+  };
+
+  const handleSubmitText = () => {
+    const trimmed = text.trim();
+    if (trimmed) onSubmit(trimmed);
+    setText('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmitText();
+    }
+  };
+
+  return (
+    <div className="px-4 py-3 border-t border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 shrink-0">
+      <div className="flex flex-col gap-2">
+        <span className="text-xs font-medium text-amber-700 dark:text-amber-400">
+          Claude is asking a question:
+        </span>
+        {options.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {options.map((opt, i) => (
+              <button
+                key={i}
+                onClick={() => handleClickOption(opt.label)}
+                className="px-2.5 py-1 text-xs rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-accent-400 dark:hover:border-accent-500 text-slate-700 dark:text-slate-300 hover:text-accent-600 dark:hover:text-accent-400 transition-colors"
+                title={opt.description}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 items-center">
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type your answer…"
+            className="flex-1 px-3 py-1.5 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:border-accent-500 text-slate-700 dark:text-slate-300"
+            autoFocus
+          />
+          <button
+            onClick={handleSubmitText}
+            disabled={!text.trim()}
+            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-accent-600 text-white hover:bg-accent-700 disabled:opacity-40 transition-colors"
+          >
+            Answer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ==================== Props ====================
 
 interface ChatPanelProps { tabId: string; chatId: string; workDir: string; }
@@ -45,6 +116,9 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
     isSegmentCollapsed,
     handleToggleThinkingExpand,
     imagesRef,
+    sendWs,
+    answerQuestion,
+    pendingQuestionRef,
   } = useChatStream({
     tabId, chatId, workDir, permissionMode, selectedModel, selectedEffort,
     chatSessionId: chat?.sessionId ?? null,
@@ -155,10 +229,33 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
             >
               Stop
             </button>
+            <button
+              onClick={() => sendWs({ type: 'permission:approve', sessionId: '' })}
+              className="ml-1 px-2 py-0.5 rounded bg-green-500/10 text-green-400 hover:bg-green-500/20 text-[11px] font-medium transition-colors"
+              title="Approve the pending permission request (PTY mode)"
+            >
+              ✅ Approve
+            </button>
+            <button
+              onClick={() => sendWs({ type: 'permission:deny', sessionId: '' })}
+              className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[11px] font-medium transition-colors"
+              title="Deny the pending permission request (PTY mode)"
+            >
+              ❌ Deny
+            </button>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Question answer bar (AskUserQuestion) */}
+      {pendingQuestionRef.current && (
+        <QuestionAnswerBar
+          question={pendingQuestionRef.current.question}
+          options={pendingQuestionRef.current.options}
+          onSubmit={(answer) => answerQuestion(answer)}
+        />
+      )}
 
       {/* Input area */}
       <div className="p-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] shrink-0 transition-colors">

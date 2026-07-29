@@ -32,11 +32,13 @@ export function* emitToolStarted(
   toolName: string,
   toolInput: Record<string, unknown>,
   sessionId: string,
+  toolUseId?: string,
 ): Generator<AppEvent> {
   yield {
     type: 'tool.started',
     toolName,
     toolInput,
+    toolUseId,
     files: deriveFileEvents(toolName, toolInput, sessionId).map(f => f.path),
     id: mkId(), timestamp: now(), sessionId,
   };

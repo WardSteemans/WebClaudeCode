@@ -1,5 +1,5 @@
 import express from 'express';
-import { createLogger } from '../logger.js';
+import { createLogger, appendToDedicatedLog } from '../logger.js';
 import type { LogLevel } from '@cc-gui/shared';
 
 export function registerLogRoutes(app: express.Express): void {
@@ -33,6 +33,11 @@ export function registerLogRoutes(app: express.Express): void {
           break;
         default:
           frontendLog.info(message, { ...data, step, stepPhase });
+      }
+
+      // Forward title-generation logs to dedicated title-gen log file
+      if (module === 'useChatStream' && typeof message === 'string' && message.startsWith('generateChatTitle')) {
+        appendToDedicatedLog('title-gen', `fe:${module}`, logLevel, message, { ...data, step, stepPhase });
       }
 
       res.json({ ok: true });
