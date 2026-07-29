@@ -359,10 +359,18 @@ export function startPtySession(opts: PtySessionOptions): PtyActiveSession {
   };
 
   // ── Send a keystroke (y/n/etc for approvals) ──
+  // Claude Code's TUI uses letter keys to select a permission option, then
+  // Enter to confirm. Sending just the letter without Enter does nothing.
+  // Pattern matches claude-wrap's chooseOption().
   const sendKeystroke = (key: string) => {
     log.info(`sending keystroke to PTY`, { sid, key });
     pty_debug(sid, PTY_DEBUG_DIR, `→ SEND KEY`, key);
     pty.write(key);
+    // Confirm selection with Enter after a short gap
+    setTimeout(() => {
+      pty.write('\r\n');
+      pty_debug(sid, PTY_DEBUG_DIR, `→ KEY ENTER (confirm ${key})`);
+    }, SUBMIT_DELAY_MS);
   };
 
   // ── Resize terminal ──
