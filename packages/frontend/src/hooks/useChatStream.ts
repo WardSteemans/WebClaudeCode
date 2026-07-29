@@ -413,9 +413,9 @@ export function useChatStream({
       if ('chatId' in msg && msg.chatId !== chatId) return;
       if (msg.type === 'event') {
         if (msg.subagentId) {
-          useSubagentStore.getState().pushEvent(msg.subagentId, msg.event);
+          useSubagentStore.getState().pushEvent(msg.subagentId, msg.event as AppEvent);
         } else {
-          handleEvent(msg.event);
+          handleEvent(msg.event as AppEvent);
         }
       } else if (msg.type === 'session_ready') {
         updateChatSessionId(tabId, chatId, msg.sessionId);
