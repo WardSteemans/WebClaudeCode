@@ -6,6 +6,7 @@ import { useEventBus } from '../store/eventBus';
 import { useSettingsStore, ALL_MODELS } from '../store/settingsStore';
 import { useWebSocket } from './useWebSocket';
 import { useSubagentStore } from '../store/subagentStore';
+import { useDiffStore } from '../store/diffStore';
 import { createFrontendLogger } from '../logger';
 import type { ChatMessage, ThinkingBlock, ThinkingTool, ThinkingFile, ThinkingSegment } from '../lib/chat/types';
 import { thinkingSummary } from '../lib/chat/thinking-utils';
@@ -421,6 +422,19 @@ export function useChatStream({
           targetBlockId: currentThinkingIdRef.current,
           currentThinkingIdRef: currentThinkingIdRef.current,
         });
+
+        if (e.files && e.files.length > 0 && e.diff) {
+          const diffStore = useDiffStore.getState();
+          for (const f of e.files) {
+            diffStore.addChange(chatId, {
+              path: f,
+              type: 'modified',
+              diff: e.diff,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+
         break;
       }
 
@@ -459,7 +473,7 @@ export function useChatStream({
           const block = next.get(id);
           if (!block) return next;
           const segs = [...block.segments];
-          const newFile: ThinkingFile = { type: e.changeType === 'modified' ? 'changed' : e.changeType, path: e.path };
+          const newFile: ThinkingFile = { type: e.changeType === 'modified' ? 'changed' : e.changeType, path: e.path, diff: e.patch };
           const last = segs[segs.length - 1];
           if (last && last.kind === 'files') {
             segs[segs.length - 1] = { ...last, files: [...last.files, newFile] };
@@ -474,6 +488,15 @@ export function useChatStream({
           targetBlockId: currentThinkingIdRef.current,
           currentThinkingIdRef: currentThinkingIdRef.current,
         });
+
+        const diffStore = useDiffStore.getState();
+        diffStore.addChange(chatId, {
+          path: e.path,
+          type: e.changeType,
+          diff: e.patch,
+          timestamp: new Date().toISOString(),
+        });
+
         break;
       }
 
@@ -519,8 +542,7 @@ export function useChatStream({
         break;
       }
     }
-    scrollToBottom();
-  }, [pushEvent, chatId, tabId, resetStreamTimer, appendToStream, finalizeStream, scrollToBottom, stopThinkingTimer, setTabStatus, updateChatLastMessage]);
+  }, [pushEvent, chatId, tabId, resetStreamTimer, appendToStream, finalizeStream, stopThinkingTimer, setTabStatus, updateChatLastMessage]);
 
   // ── WebSocket ──
 
