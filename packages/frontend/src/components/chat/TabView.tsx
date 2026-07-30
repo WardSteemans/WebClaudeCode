@@ -15,9 +15,13 @@ export function TabView({ tabId, workDir }: TabViewProps) {
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Only render the active chat — unmount inactive ones to prevent listener/memory leaks */}
-      {tab.chats.filter(c => c.id === tab.activeChatId).map((chat) => (
-        <div key={chat.id} className="flex-1 flex-col min-h-0 flex">
+      {/* Render all chats — hide inactive via CSS; keep mounts alive for stream continuity */}
+      {tab.chats.map((chat) => (
+        <div
+          key={chat.id}
+          style={{ display: chat.id === tab.activeChatId ? 'flex' : 'none' }}
+          className="flex-1 flex-col min-h-0"
+        >
           <ErrorBoundary name="Chat panel">
             <ChatPanel tabId={tabId} chatId={chat.id} workDir={workDir} />
           </ErrorBoundary>

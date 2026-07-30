@@ -59,6 +59,12 @@ export interface ToolResultMessage {
   content: string;
 }
 
+/** Request buffered events for a chat — sent by frontend on ChatPanel mount */
+export interface CatchupMessage {
+  type: 'catchup';
+  chatId: string;
+}
+
 export type WsClientMessage =
   | PromptMessage
   | AbortMessage
@@ -66,7 +72,8 @@ export type WsClientMessage =
   | SubagentAbortMessage
   | PermissionApproveMessage
   | PermissionDenyMessage
-  | ToolResultMessage;
+  | ToolResultMessage
+  | CatchupMessage;
 
 // ==================== Server → Client ====================
 
@@ -131,6 +138,19 @@ export interface WsOutgoingError {
   message: string;
 }
 
+/** Batch of buffered events sent in response to a catchup request */
+export interface WsOutgoingCatchupEvents {
+  type: 'catchup_events';
+  chatId: string;
+  events: unknown[];
+}
+
+/** Sent after catchup_events — the client is now receiving live events */
+export interface WsOutgoingCatchupDone {
+  type: 'catchup_done';
+  chatId: string;
+}
+
 /** Discriminated union of all server→client message types */
 export type WsOutgoingMessage =
   | WsOutgoingEvent
@@ -141,4 +161,6 @@ export type WsOutgoingMessage =
   | WsOutgoingSubagentReady
   | WsOutgoingSubagentExit
   | WsOutgoingSubagentAborted
-  | WsOutgoingError;
+  | WsOutgoingError
+  | WsOutgoingCatchupEvents
+  | WsOutgoingCatchupDone;
