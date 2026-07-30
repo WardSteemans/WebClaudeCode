@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, X, FolderOpen, Code2, Sun, Moon, Files, MessageSquare, LayoutPanelLeft, GitBranch, Cloud, Settings as SettingsIcon, BarChart3, Puzzle } from 'lucide-react';
+import { Plus, X, FolderOpen, Code2, Sun, Moon, Files, MessageSquare, LayoutPanelLeft, GitBranch, Cloud, Settings as SettingsIcon, BarChart3, Puzzle, FileDiff } from 'lucide-react';
 import { useTheme } from './ThemeContext';
 import { useResizable } from './hooks/useResizable';
 import { useTabStore } from './store';
@@ -20,6 +20,7 @@ import { ActivityTimeline } from './components/panels/ActivityTimeline';
 import { Notifications } from './components/ui/Notifications';
 import { SubagentPanel } from './components/panels/SubagentPanel';
 import { CapabilitiesPanel } from './components/panels/CapabilitiesPanel';
+import { ChatDiffsPanel } from './components/panels/ChatDiffsPanel';
 import { StatusBar } from './components/ui/StatusBar';
 import { ProxyMetricsPanel } from './components/ProxyMetricsPanel';
 import { FolderPicker } from './components/files/FolderPicker';
@@ -33,7 +34,7 @@ export default function App() {
   const { theme, toggle: toggleTheme } = useTheme();
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [leftPanel, setLeftPanel] = useState<'explorer' | 'git' | 'azure' | 'overview' | 'capabilities'>('explorer');
+  const [leftPanel, setLeftPanel] = useState<'explorer' | 'git' | 'azure' | 'overview' | 'capabilities' | 'changes'>('explorer');
   const [showSettings, setShowSettings] = useState(false);
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const showActivityPanel = useSettingsStore(s => s.showActivity);
@@ -121,7 +122,7 @@ export default function App() {
     }
   };
 
-  const leftPanelTitle = leftPanel === 'git' ? 'Source Control' : leftPanel === 'azure' ? 'Azure DevOps' : leftPanel === 'overview' ? 'Overview' : leftPanel === 'capabilities' ? 'Capabilities' : 'Explorer';
+  const leftPanelTitle = leftPanel === 'git' ? 'Source Control' : leftPanel === 'azure' ? 'Azure DevOps' : leftPanel === 'overview' ? 'Overview' : leftPanel === 'capabilities' ? 'Capabilities' : leftPanel === 'changes' ? 'Changes' : 'Explorer';
 
   return (
     <div className="h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-text)] transition-colors">
@@ -187,6 +188,9 @@ export default function App() {
             <button onClick={() => { if (leftPanel === 'capabilities' && !explorer.collapsed) { explorer.toggle(); setLeftPanel('explorer'); } else { if (explorer.collapsed) explorer.toggle(); setLeftPanel('capabilities'); } }} className={`p-1.5 rounded-md transition-colors ${leftPanel === 'capabilities' && !explorer.collapsed ? 'text-accent-500 bg-accent-500/10' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'}`} title="Capabilities">
               <Puzzle size={20} />
             </button>
+            <button onClick={() => { if (leftPanel === 'changes' && !explorer.collapsed) { explorer.toggle(); setLeftPanel('explorer'); } else { if (explorer.collapsed) explorer.toggle(); setLeftPanel('changes'); } }} className={`p-1.5 rounded-md transition-colors ${leftPanel === 'changes' && !explorer.collapsed ? 'text-accent-500 bg-accent-500/10' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'}`} title="Changes">
+              <FileDiff size={20} />
+            </button>
             <button onClick={() => setShowSettings(true)} className="mt-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors" title="Settings">
               <SettingsIcon size={20} />
             </button>
@@ -202,6 +206,7 @@ export default function App() {
             {!explorer.collapsed && leftPanel === 'azure' && <ErrorBoundary name="Azure DevOps panel"><AzureDevOpsPanel workDir={activeTab?.workDir ?? null} /></ErrorBoundary>}
             {!explorer.collapsed && leftPanel === 'overview' && <ErrorBoundary name="Session overview"><SessionOverview sessionId={activeTab?.chats.find(c => c.id === activeTab.activeChatId)?.sessionId ?? null} /></ErrorBoundary>}
             {!explorer.collapsed && leftPanel === 'capabilities' && <ErrorBoundary name="Capabilities"><CapabilitiesPanel /></ErrorBoundary>}
+            {!explorer.collapsed && leftPanel === 'changes' && <ErrorBoundary name="Changes panel"><ChatDiffsPanel chatId={activeTab?.activeChatId ?? ''} /></ErrorBoundary>}
           </div>
 
           {!explorer.collapsed && <div onMouseDown={explorer.onMouseDown} className="w-1 cursor-col-resize hover:bg-accent-500/50 transition-colors shrink-0 bg-[var(--color-border)]" />}
