@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, Check, X, Loader, FileText, Terminal, Eye } from 'lucide-react';
 import type { ChatMessage, ThinkingBlock, ThinkingTool, ThinkingFile } from '../../lib/chat/types';
 import { thinkingSummary, toolSummaryLine } from '../../lib/chat/thinking-utils';
+import { InlineDiff } from '../files/InlineDiff';
 
 // ==================== Props ====================
 
@@ -92,6 +93,11 @@ function ToolSegmentView({
               ))}
             </div>
           )}
+          {tool.diff && (
+            <div className="mt-1">
+              <InlineDiff diff={tool.diff} />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -119,11 +125,18 @@ function FilesSegmentView({
       {!collapsed && (
         <div className="mt-0.5 ml-6 space-y-0.5">
           {files.map((f, i) => (
-            <div key={i} className="flex items-center gap-1.5 text-[11px]">
-              {f.type === 'read' && <Eye size={10} className="text-blue-400 shrink-0" />}
-              {f.type !== 'read' && <FileText size={10} className="text-amber-400 shrink-0" />}
-              <span className="text-slate-600 dark:text-slate-400 truncate">{f.path.split(/[/\\]/).pop()}</span>
-              <span className="text-[10px] text-slate-500">{f.type}</span>
+            <div key={i}>
+              <div className="flex items-center gap-1.5 text-[11px]">
+                {f.type === 'read' && <Eye size={10} className="text-blue-400 shrink-0" />}
+                {f.type !== 'read' && <FileText size={10} className="text-amber-400 shrink-0" />}
+                <span className="text-slate-600 dark:text-slate-400 truncate">{f.path.split(/[/\\]/).pop()}</span>
+                <span className="text-[10px] text-slate-500">{f.type}</span>
+              </div>
+              {f.diff && (
+                <div className="mt-1 mb-1">
+                  <InlineDiff diff={f.diff} />
+                </div>
+              )}
             </div>
           ))}
         </div>
