@@ -527,6 +527,22 @@ export function useChatStream({
   const { connect, send, close } = useWebSocket({
     url: `ws://${location.host}/ws`,
     onMessage: (msg) => {
+      // ── Catchup: replay buffered events ──
+      if (msg.type === 'catchup_events') {
+        const m = msg as { type: 'catchup_events'; chatId: string; events: AppEvent[] };
+        console.log(`[useChatStream] catchup events: chat=[${m.chatId.slice(0, 8)}] count=${m.events.length}`);
+        if (m.events.length > 0) {
+          for (const event of m.events) { handleEvent(event); }
+        }
+        return;
+      }
+
+      if (msg.type === 'catchup_done') {
+        const m = msg as { type: 'catchup_done'; chatId: string };
+        console.log(`[useChatStream] catchup done: chat=[${m.chatId.slice(0, 8)}]`);
+        return;
+      }
+
       if ('chatId' in msg && msg.chatId !== chatId) {
         // Message for a different chat — silently skip (logged only for assistant events to avoid noise)
         if (msg.type === 'event') {
@@ -626,6 +642,13 @@ export function useChatStream({
   });
 
   useEffect(() => { connect(); return () => close(); }, [connect]);
+
+  // ── Catchup: request buffered events on mount ──
+  useEffect(() => {
+    if (!chatId) return;
+    console.log(`[useChatStream] catchup request: chat=[${chatId.slice(0, 8)}]`);
+    send({ type: 'catchup', chatId });
+  }, [chatId, send]);
 
   // ── Subagent listeners ──
 
