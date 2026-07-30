@@ -5,8 +5,9 @@ import { createServer } from 'http';
 import { startSession, ActiveSession } from '../services/session-manager.js';
 import { startPtySession, PtyActiveSession, detectPromptType } from '../services/ptty-session-manager.js';
 import { parseClaudeEvent } from '../services/eventParser/index.js';
+import { getRegistry, type SessionRegistry } from '../services/session-registry.js';
 import { createLogger } from '../logger.js';
-import type { SessionUsageEvent } from '@cc-gui/shared';
+import type { SessionUsageEvent, CatchupMessage } from '@cc-gui/shared';
 import type {
   WsClientMessage, PermissionMode, PromptMessage,
   WsOutgoingEvent, WsOutgoingSessionReady, WsOutgoingSessionExit,
@@ -18,7 +19,12 @@ const log = createLogger('ws');
 
 type AnyActiveSession = ActiveSession | PtyActiveSession;
 
-const sessions = new Map<string, AnyActiveSession>();
+export interface WsServerState {
+  sessions: SessionRegistry;
+  subSessions: Map<string, ActiveSession>;
+}
+
+const ptySessions = new Map<string, AnyActiveSession>();
 const subSessions = new Map<string, ActiveSession>();
 
 // Per-connection heartbeat
@@ -147,13 +153,15 @@ function extractUsageFromContext(content: string, sessionId: string): SessionUsa
 
 // ── WebSocket setup ──
 
-export function setupWebSocket(server: ReturnType<typeof createServer>): { sessions: Map<string, AnyActiveSession>; subSessions: Map<string, ActiveSession> } {
+export function setupWebSocket(server: ReturnType<typeof createServer>): WsServerState {
   const wss = new WebSocketServer({ server, path: '/ws' });
+  const registry = getRegistry();
 
   wss.on('connection', (ws: WebSocket) => {
     let activeSession: AnyActiveSession | null = null;
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let isAlive = true;
+    const connectionChatIds = new Set<string>();
 
     heartbeatTimer = setInterval(() => {
       if (!isAlive) {
@@ -189,7 +197,7 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
           case 'prompt': {
             if (activeSession) {
               activeSession.abort();
-              sessions.delete(activeSession.sessionId);
+              ptySessions.delete(activeSession.sessionId);
             }
 
             const workDir = msg.workDir || process.cwd();
@@ -230,25 +238,24 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
                       type: 'session_exit', sessionId: sid, exitCode: code,
                     } satisfies WsOutgoingSessionExit));
                   }
-                  sessions.delete(ptySession.sessionId);
+                  ptySessions.delete(ptySession.sessionId);
                   if (activeSession?.sessionId === ptySession.sessionId) activeSession = null;
                 },
               });
 
-              sessions.set(ptySession.sessionId, ptySession);
+              ptySessions.set(ptySession.sessionId, ptySession);
               activeSession = ptySession;
               if (msg.prompt) ptySession.sendPrompt(msg.prompt as string);
             } else {
-              // ── Stream-JSON mode (original) ──
-              const session = startSession({
+              const entry = registry.createOrResume(chatId, {
                 resumeSessionId: msg.resumeSessionId,
                 workDir,
                 permissionMode,
                 env: msg.env,
+                cliArgs: [],
                 onRawLine: (rawLine, sid) => {
-                  if (ws.readyState !== WebSocket.OPEN) return;
                   for (const event of parseClaudeEvent(rawLine, sid)) {
-                    ws.send(JSON.stringify({ type: 'event', chatId, event } satisfies WsOutgoingEvent));
+                    registry.bufferAndBroadcast(chatId, event);
                   }
                 },
                 onSessionReady: (realId) => {
@@ -258,21 +265,29 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
                   }
                 },
                 onExit: (code) => {
-                  const sid = realSessionId || session.sessionId;
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                      type: 'session_exit', sessionId: sid, exitCode: code,
-                    } satisfies WsOutgoingSessionExit));
+                  const sid = realSessionId || entry.session.sessionId;
+                  const exitMsg = { type: 'session_exit', sessionId: sid, exitCode: code } satisfies WsOutgoingSessionExit;
+                  const sessionEntry = registry.get(chatId);
+                  if (sessionEntry) {
+                    for (const l of sessionEntry.listeners) {
+                      if (l.readyState === WebSocket.OPEN) l.send(JSON.stringify(exitMsg));
+                    }
                   }
-                  sessions.delete(session.sessionId);
-                  if (activeSession?.sessionId === session.sessionId) activeSession = null;
+                  if (ws.readyState === WebSocket.OPEN) queryContext(workDir, sid, chatId, ws);
                 },
               });
-
-              sessions.set(session.sessionId, session);
-              activeSession = session;
-              if (msg.prompt) session.sendPrompt(msg.prompt as string | unknown[]);
+              registry.addListener(chatId, ws);
+              connectionChatIds.add(chatId);
+              if (msg.prompt) entry.session.sendPrompt(msg.prompt as string | unknown[]);
             }
+            break;
+          }
+
+          // ── Catchup: replay buffered events ──
+          case 'catchup': {
+            const chatId = (msg as CatchupMessage).chatId;
+            registry.replay(chatId, ws);
+            connectionChatIds.add(chatId);
             break;
           }
 
@@ -322,12 +337,9 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
 
           // ── Abort active session ──
           case 'abort': {
-            if (activeSession) {
-              activeSession.abort();
-              sessions.delete(activeSession.sessionId);
-              activeSession = null;
-              ws.send(JSON.stringify({ type: 'aborted' } satisfies WsOutgoingAborted));
-            }
+            for (const chatId of connectionChatIds) { registry.abort(chatId); }
+            connectionChatIds.clear();
+            ws.send(JSON.stringify({ type: 'aborted' } satisfies WsOutgoingAborted));
             break;
           }
 
@@ -398,19 +410,11 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
       }
-      const hadSession = !!activeSession;
-      const subCount = subSessions.size;
-      if (activeSession) {
-        activeSession.abort();
-        sessions.delete(activeSession.sessionId);
-      }
+      registry.removeListenerWs(ws);
       for (const [id, sub] of subSessions) {
         sub.abort();
       }
       subSessions.clear();
-      if (hadSession || subCount > 0) {
-        log.info(`client disconnected`, { hadSession, subCount });
-      }
     });
   });
 
@@ -418,5 +422,5 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): { sessi
     log.error('server-level WebSocket error', err instanceof Error ? err : undefined);
   });
 
-  return { sessions, subSessions };
+  return { sessions: registry, subSessions };
 }

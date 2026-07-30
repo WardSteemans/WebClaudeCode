@@ -44,7 +44,7 @@ export function getRegistry(): SessionRegistry {
 
 // ── Registry class ──
 
-class SessionRegistry {
+export class SessionRegistry {
   private sessions = new Map<string, SessionEntry>();
 
   /** Test helper: inject a pre-built session entry */
