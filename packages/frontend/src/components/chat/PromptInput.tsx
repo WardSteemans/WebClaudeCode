@@ -374,31 +374,39 @@ export const PromptInput = memo(function PromptInput({
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
-    const newImages: ImageAttachment[] = [];
+    const imageItems: { item: DataTransferItem; blob: Blob }[] = [];
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (item.type.startsWith('image/')) {
         const blob = item.getAsFile();
-        if (!blob) continue;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1];
-          const img: ImageAttachment = {
-            id: crypto.randomUUID(),
-            base64,
-            mediaType: item.type,
-            fileName: `pasted-image.${item.type.split('/')[1]}`,
-          };
-          newImages.push(img);
-          if (newImages.length === 1) {
-            const updated = [...images, ...newImages];
-            setImages(updated);
-            onImagesChange?.(updated);
-          }
-        };
-        reader.readAsDataURL(blob);
-        e.preventDefault();
+        if (blob) {
+          imageItems.push({ item, blob });
+          e.preventDefault();
+        }
       }
+    }
+    if (imageItems.length === 0) return;
+
+    let loaded = 0;
+    const newImages: ImageAttachment[] = [];
+    for (const { item, blob } of imageItems) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        newImages.push({
+          id: crypto.randomUUID(),
+          base64,
+          mediaType: item.type,
+          fileName: `pasted-image.${item.type.split('/')[1]}`,
+        });
+        loaded++;
+        if (loaded === imageItems.length) {
+          const updated = [...images, ...newImages];
+          setImages(updated);
+          onImagesChange?.(updated);
+        }
+      };
+      reader.readAsDataURL(blob);
     }
   }, [images, onImagesChange]);
 
