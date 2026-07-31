@@ -10,6 +10,8 @@ import { ThinkingBlockView } from './ThinkingBlock';
 import { ChatToolbar } from './ChatToolbar';
 import { PromptInput } from './PromptInput';
 import { FolderPicker } from '../files/FolderPicker';
+import { PermissionBar } from './PermissionBar';
+import { useEventBus, type PermissionRequest } from '../../store/eventBus';
 
 // ==================== Question Answer Bar ====================
 
@@ -147,6 +149,19 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
   const [resetKey, setResetKey] = useState(0);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
+  // Sync local state with store when chat data loads async (Zustand persist hydration)
+  useEffect(() => {
+    if (chat?.permissionMode !== undefined) {
+      setPermissionMode(chat.permissionMode || 'default');
+    }
+  }, [chat?.permissionMode]);
+  useEffect(() => {
+    if (chat?.model) setSelectedModel(chat.model);
+  }, [chat?.model]);
+  useEffect(() => {
+    if (chat?.effort !== undefined) setSelectedEffort(chat.effort || '');
+  }, [chat?.effort]);
+
   // ── Streaming hook ──
   const {
     messages,
@@ -154,6 +169,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
     thinkingExpanded,
     collapsedSegments,
     isStreaming,
+    ptyApprovalPending,
     input,
     setInput,
     messagesEndRef,
@@ -167,6 +183,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
     sendWs,
     answerQuestion,
     pendingQuestionRef,
+    clearPtyApproval,
   } = useChatStream({
     tabId, chatId, workDir, permissionMode, selectedModel, selectedEffort,
     chatSessionId: chat?.sessionId ?? null,
@@ -300,20 +317,6 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
                       >
                         Stop
                       </button>
-                      <button
-                        onClick={() => sendWs({ type: 'permission:approve', sessionId: '' })}
-                        className="ml-1 px-2 py-0.5 rounded bg-green-500/10 text-green-400 hover:bg-green-500/20 text-[11px] font-medium transition-colors"
-                        title="Approve the pending permission request (PTY mode)"
-                      >
-                        ✅ Approve
-                      </button>
-                      <button
-                        onClick={() => sendWs({ type: 'permission:deny', sessionId: '' })}
-                        className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[11px] font-medium transition-colors"
-                        title="Deny the pending permission request (PTY mode)"
-                      >
-                        ❌ Deny
-                      </button>
                     </div>
                   )}
                   <div className="h-6" />
@@ -332,6 +335,25 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
           onSubmit={(answer) => answerQuestion(answer)}
         />
       )}
+
+      {/* Permission bar — handles both stream-json permission.queue events and PTY approval prompts */}
+      <PermissionBar
+        onApprove={(req: PermissionRequest) => {
+          sendWs({ type: 'permission:approve', sessionId: req.sessionId });
+        }}
+        onDeny={(req: PermissionRequest) => {
+          sendWs({ type: 'permission:deny', sessionId: req.sessionId });
+        }}
+        ptyApprovalPending={ptyApprovalPending}
+        onPtyApprove={() => {
+          sendWs({ type: 'permission:approve', sessionId: '' });
+          clearPtyApproval();
+        }}
+        onPtyDeny={() => {
+          sendWs({ type: 'permission:deny', sessionId: '' });
+          clearPtyApproval();
+        }}
+      />
 
       {/* Input area */}
       <div className="p-3 border-t border-[var(--color-border)] bg-[var(--color-surface)] shrink-0 transition-colors">

@@ -204,6 +204,9 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): WsServe
             const permissionMode: PermissionMode = msg.permissionMode || 'bypassPermissions';
             const chatId = msg._chatId || 'default';
             const usePty = msg.usePty ?? false;
+             // Abort existing stream-json session so the new permission mode takes effect
+            if (!usePty) registry.abort(chatId);
+
             let realSessionId: string | null = null;
 
             if (usePty) {
@@ -291,22 +294,50 @@ export function setupWebSocket(server: ReturnType<typeof createServer>): WsServe
             break;
           }
 
-          // ── Permission: approve (PTY mode) ──
+          // ── Permission: approve ──
           case 'permission:approve': {
+            // PTY mode: send keystroke
             const pty = activeSession as PtyActiveSession | null;
             if (pty && 'sendKeystroke' in pty) {
               pty.sendKeystroke('y');
-              log.info('permission:approve → sent "y"', { sessionId: pty.sessionId.slice(0, 8) });
+              log.info('permission:approve → PTY sent "y"', { sessionId: pty.sessionId.slice(0, 8) });
+              break;
+            }
+            // Stream-json mode: send stdin response to the active chat session
+            for (const chatId of connectionChatIds) {
+              const entry = registry.get(chatId);
+              if (entry && !entry.done) {
+                entry.session.sendStdin({
+                  type: 'user',
+                  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: msg.sessionId, content: 'allow' }] },
+                });
+                log.info('permission:approve → stdin "allow"', { chatId: chatId.slice(0, 8) });
+                break;
+              }
             }
             break;
           }
 
-          // ── Permission: deny (PTY mode) ──
+          // ── Permission: deny ──
           case 'permission:deny': {
+            // PTY mode: send keystroke
             const pty = activeSession as PtyActiveSession | null;
             if (pty && 'sendKeystroke' in pty) {
               pty.sendKeystroke('n');
-              log.info('permission:deny → sent "n"', { sessionId: pty.sessionId.slice(0, 8) });
+              log.info('permission:deny → PTY sent "n"', { sessionId: pty.sessionId.slice(0, 8) });
+              break;
+            }
+            // Stream-json mode: send stdin response to the active chat session
+            for (const chatId of connectionChatIds) {
+              const entry = registry.get(chatId);
+              if (entry && !entry.done) {
+                entry.session.sendStdin({
+                  type: 'user',
+                  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: msg.sessionId, content: 'deny' }] },
+                });
+                log.info('permission:deny → stdin "deny"', { chatId: chatId.slice(0, 8) });
+                break;
+              }
             }
             break;
           }
