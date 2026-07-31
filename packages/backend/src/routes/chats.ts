@@ -39,7 +39,7 @@ export function registerChatsRoutes(app: express.Express): void {
     }
 
     const rawBase = (env?.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, '');
-    const url = new URL('/v1/messages', rawBase);
+    const url = new URL(rawBase + '/v1/messages');
     const model = env?.ANTHROPIC_MODEL || 'claude-3-5-haiku-20241022';
     const isHttp = url.protocol === 'http:';
 

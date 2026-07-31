@@ -7,3 +7,4 @@ export * from './logger';
 export * from './stream-timeline';
 export * from './utils/deep-object';
 export * from './utils/format';
+export * from './okf';

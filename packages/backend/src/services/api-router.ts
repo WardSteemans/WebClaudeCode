@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import type { Request, Response } from 'express';
 import { getSettings, getAllImageCache, insertImageCache } from '../data/db.js';
 import { createLogger } from '../logger.js';
+import { buildOkfContextString, injectOkfIntoSystem } from './okf/bundler.js';
 
 const log = createLogger('api-router');
 const cacheLog = createLogger('image-cache', 'image-cache/cache');
@@ -618,6 +619,23 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
     return;
   }
 
+  // ── Inject OKF Compiled Memory context into system prompt ──
+  let okfBody = body;
+  const okfContext = buildOkfContextString(process.cwd());
+  if (okfContext) {
+    const systemRaw = (parsed as Record<string, unknown>).system;
+    let systemBlocks: Array<{ type: string; text?: string; cache_control?: { type: string } }>;
+    if (typeof systemRaw === 'string') {
+      systemBlocks = [{ type: 'text', text: systemRaw }];
+    } else if (Array.isArray(systemRaw)) {
+      systemBlocks = systemRaw as Array<{ type: string; text?: string; cache_control?: { type: string } }>;
+    } else {
+      systemBlocks = [];
+    }
+    (parsed as Record<string, unknown>).system = injectOkfIntoSystem(systemBlocks, okfContext);
+    okfBody = JSON.stringify(parsed);
+  }
+
   // ── Evaluate routing rules ──
   const ruleResult = applyRules(parsed);
   const effectiveModel = ruleResult.overrideModel || model;
@@ -626,7 +644,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
 
   // No images and no rule-triggered vision → forward directly
   if (!shouldUseVision) {
-    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, req, res, (statusCode, ttfbMs, errMsg) => {
+    forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, okfBody, req, res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'direct', provider, model: effectiveModel, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: 0,
@@ -682,7 +700,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
         });
       });
     } catch {
-      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, body, req, res, (statusCode, ttfbMs, errMsg) => {
+      forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, okfBody, req, res, (statusCode, ttfbMs, errMsg) => {
         recordMetric({
           routing: 'error', provider: 'deepseek', model, statusCode,
           ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
