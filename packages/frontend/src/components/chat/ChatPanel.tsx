@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, memo, useDeferredValue } from 'react';
+import { useState, useMemo, useEffect, useRef, memo, useDeferredValue } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import type { ChatMessage, ThinkingBlock } from '../../lib/chat/types';
 import { formatChatTime } from '../../lib/chat/thinking-utils';
 import { useTabStore } from '../../store';
@@ -144,6 +145,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
   const [selectedEffort, setSelectedEffort] = useState(chat?.effort || '');
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [resetKey, setResetKey] = useState(0);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   // ── Streaming hook ──
   const {
@@ -210,8 +212,8 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
   return (
     <div className="flex flex-col h-full">
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
-        {renderMessages.length === 0 && (
+      <div className="flex-1">
+        {renderMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-2">
             <span className="text-sm">Ready in</span>
             <button
@@ -222,87 +224,104 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
               {workDir}
             </button>
           </div>
-        )}
-        {renderMessages.map((msg) => {
-          const thinkBlock = thinkingBlocks.get(msg.id);
-          const isThinkingMsg = !!(msg.role === 'tool' && thinkBlock);
-          const isSystemMsg = msg.role === 'system';
-          const align = msg.role === 'user' ? 'ml-auto' : 'mr-auto';
+        ) : (
+          <Virtuoso
+            ref={virtuosoRef}
+            className="px-4"
+            data={renderMessages}
+            followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
+            computeItemKey={(index, msg) => msg.id}
+            increaseViewportBy={{ top: 200, bottom: 200 }}
+            initialTopMostItemIndex={999999}
+            itemContent={(index, msg) => {
+              const thinkBlock = thinkingBlocks.get(msg.id);
+              const isThinkingMsg = !!(msg.role === 'tool' && thinkBlock);
+              const isSystemMsg = msg.role === 'system';
+              const align = msg.role === 'user' ? 'ml-auto' : 'mr-auto';
 
-          return (
-            <div key={msg.id} className={`max-w-[85%] ${align}`}>
-              <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${bubbleClass(msg, isThinkingMsg)}`}>
-                {isThinkingMsg ? (
-                  <ThinkingBlockView
-                    msgId={msg.id}
-                    block={thinkBlock!}
-                    expanded={thinkingExpanded.has(msg.id)}
-                    onToggleExpand={() => handleToggleThinkingExpand(msg.id, thinkBlock!)}
-                    collapsedSegments={collapsedSegments}
-                    onSegmentClick={(segId) => handleSegmentClick(segId, msg.id)}
-                  />
-                ) : isSystemMsg ? (
-                  <span className="text-[12px]">{msg.content}</span>
-                ) : msg.role === 'error' ? (
-                  <span>{msg.content}</span>
-                ) : (
-                  <>
-                    {msg.images && msg.images.length > 0 && (
-                      <div className="flex gap-1.5 mb-2 flex-wrap">
-                        {msg.images.map((img, i) => (
-                          <img
-                            key={i}
-                            src={`data:${img.mediaType};base64,${img.base64}`}
-                            alt="Attached"
-                            className="max-w-[200px] max-h-[150px] rounded-lg object-cover"
-                          />
-                        ))}
-                      </div>
+              return (
+                <div className={`max-w-[85%] ${align} py-3`}>
+                  <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${bubbleClass(msg, isThinkingMsg)}`}>
+                    {isThinkingMsg ? (
+                      <ThinkingBlockView
+                        msgId={msg.id}
+                        block={thinkBlock!}
+                        expanded={thinkingExpanded.has(msg.id)}
+                        onToggleExpand={() => handleToggleThinkingExpand(msg.id, thinkBlock!)}
+                        collapsedSegments={collapsedSegments}
+                        onSegmentClick={(segId) => handleSegmentClick(segId, msg.id)}
+                      />
+                    ) : isSystemMsg ? (
+                      <span className="text-[12px]">{msg.content}</span>
+                    ) : msg.role === 'error' ? (
+                      <span>{msg.content}</span>
+                    ) : (
+                      <>
+                        {msg.images && msg.images.length > 0 && (
+                          <div className="flex gap-1.5 mb-2 flex-wrap">
+                            {msg.images.map((img, i) => (
+                              <img
+                                key={i}
+                                src={`data:${img.mediaType};base64,${img.base64}`}
+                                alt="Attached"
+                                className="max-w-[200px] max-h-[150px] rounded-lg object-cover"
+                              />
+                            ))}
+                          </div>
+                        )}
+                        {msg.files && msg.files.length > 0 && (
+                          <div className="flex flex-col gap-2 mb-2">
+                            {msg.files.map((file, i) => (
+                              <FilePreviewBlock key={i} fileName={file.fileName} content={file.text} />
+                            ))}
+                          </div>
+                        )}
+                        <MessageContent content={msg.content} />
+                      </>
                     )}
-                    {msg.files && msg.files.length > 0 && (
-                      <div className="flex flex-col gap-2 mb-2">
-                        {msg.files.map((file, i) => (
-                          <FilePreviewBlock key={i} fileName={file.fileName} content={file.text} />
-                        ))}
-                      </div>
-                    )}
-                    <MessageContent content={msg.content} />
-                  </>
-                )}
-              </div>
-              <div className={`text-[10px] text-slate-400 dark:text-slate-600 mt-0.5 ${msg.role === 'user' ? 'text-right' : 'text-left'} px-1`} title={new Date(msg.timestamp).toLocaleString()}>
-                {formatChatTime(msg.timestamp)}
-              </div>
-            </div>
-          );
-        })}
-        {isStreaming && (
-          <div className="flex items-center gap-2 text-xs px-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-accent-500 animate-pulse" />
-            <span className="text-slate-600 dark:text-slate-400">Processing…</span>
-            <button
-              onClick={abort}
-              className="ml-2 px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[11px] font-medium transition-colors"
-            >
-              Stop
-            </button>
-            <button
-              onClick={() => sendWs({ type: 'permission:approve', sessionId: '' })}
-              className="ml-1 px-2 py-0.5 rounded bg-green-500/10 text-green-400 hover:bg-green-500/20 text-[11px] font-medium transition-colors"
-              title="Approve the pending permission request (PTY mode)"
-            >
-              ✅ Approve
-            </button>
-            <button
-              onClick={() => sendWs({ type: 'permission:deny', sessionId: '' })}
-              className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[11px] font-medium transition-colors"
-              title="Deny the pending permission request (PTY mode)"
-            >
-              ❌ Deny
-            </button>
-          </div>
+                  </div>
+                  <div className={`text-[10px] text-slate-400 dark:text-slate-600 mt-0.5 ${msg.role === 'user' ? 'text-right' : 'text-left'} px-1`} title={new Date(msg.timestamp).toLocaleString()}>
+                    {formatChatTime(msg.timestamp)}
+                  </div>
+                </div>
+              );
+            }}
+            components={{
+              Header: () => <div className="h-6" />,
+              Footer: () => (
+                <>
+                  {isStreaming && (
+                    <div className="flex items-center gap-2 text-xs px-1 py-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-accent-500 animate-pulse" />
+                      <span className="text-slate-600 dark:text-slate-400">Processing…</span>
+                      <button
+                        onClick={abort}
+                        className="ml-2 px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[11px] font-medium transition-colors"
+                      >
+                        Stop
+                      </button>
+                      <button
+                        onClick={() => sendWs({ type: 'permission:approve', sessionId: '' })}
+                        className="ml-1 px-2 py-0.5 rounded bg-green-500/10 text-green-400 hover:bg-green-500/20 text-[11px] font-medium transition-colors"
+                        title="Approve the pending permission request (PTY mode)"
+                      >
+                        ✅ Approve
+                      </button>
+                      <button
+                        onClick={() => sendWs({ type: 'permission:deny', sessionId: '' })}
+                        className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 text-[11px] font-medium transition-colors"
+                        title="Deny the pending permission request (PTY mode)"
+                      >
+                        ❌ Deny
+                      </button>
+                    </div>
+                  )}
+                  <div className="h-6" />
+                </>
+              ),
+            }}
+          />
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Question answer bar (AskUserQuestion) */}
@@ -331,6 +350,7 @@ function ChatPanelInner({ tabId, chatId, workDir: _tabWorkDir }: ChatPanelProps)
           onSubmit={() => {
             handleSend();
             setResetKey(k => k + 1);
+            virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'smooth' });
           }}
           disabled={isStreaming}
           onImagesChange={(imgs) => { imagesRef.current = imgs; }}

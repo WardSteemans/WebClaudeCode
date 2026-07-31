@@ -1,9 +1,34 @@
 import * as https from 'https';
+import { createHash } from 'crypto';
 import type { Request, Response } from 'express';
-import { getSettings } from '../data/db.js';
+import { getSettings, getAllImageCache, insertImageCache } from '../data/db.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('api-router');
+const cacheLog = createLogger('image-cache', 'image-cache/cache');
+
+// ── Image Description Cache (two-tier: memory + SQLite) ──
+
+const imageCache = new Map<string, string>(); // hash → description
+let cachePreloaded = false;
+
+function preloadCache(): void {
+  if (cachePreloaded) return;
+  try {
+    const entries = getAllImageCache();
+    for (const [hash, desc] of entries) {
+      imageCache.set(hash, desc);
+    }
+    cachePreloaded = true;
+    cacheLog.info('cache preloaded from SQLite', { entries: entries.size });
+  } catch (err) {
+    cacheLog.error('failed to preload cache from SQLite', err instanceof Error ? err : undefined);
+  }
+}
+
+function hashImage(img: ImageBlock): string {
+  return createHash('sha256').update(img.source.data).digest('hex');
+}
 
 // ── Types ──
 
@@ -39,6 +64,8 @@ export interface ProxyMetric {
   totalMs: number;
   bodySize: number;
   imageCount: number;
+  cacheHits: number;
+  cacheMisses: number;
   error?: string;
 }
 
@@ -202,9 +229,9 @@ function ensureNonEmptyContent(obj: unknown, fallbackText: string): unknown {
   return result;
 }
 
-// ── Anthropic Vision API ──
+// ── Anthropic Vision API (per-image, used with caching) ──
 
-async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise<string> {
+async function describeImage(cfg: UpstreamConfig, img: ImageBlock): Promise<string> {
   if (!cfg.anthropicApiKey) {
     throw new Error('No Anthropic API key configured for vision processing');
   }
@@ -215,13 +242,11 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
     messages: [{
       role: 'user',
       content: [
-        ...images.map(img => ({ type: 'image', source: img.source })),
-        { type: 'text', text: 'Describe each image in detail. Focus on layout, text content, UI elements, alignment, colors, and any visible issues. Be thorough but concise.' },
+        { type: 'image', source: img.source },
+        { type: 'text', text: 'Describe this image in detail. Focus on layout, text content, UI elements, alignment, colors, and any visible issues. Be thorough but concise.' },
       ],
     }],
   });
-
-  log.info('calling vision API', { model: cfg.visionModel, imageCount: images.length });
 
   return new Promise((resolve, reject) => {
     const url = new URL('/v1/messages', 'https://api.anthropic.com');
@@ -250,7 +275,6 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
             .filter((b: { type: string; text?: string }) => b.type === 'text')
             .map((b: { type: string; text?: string }) => b.text)
             .join('\n');
-          log.info('vision API success', { descriptionLength: text.length });
           resolve(text);
         } catch (err) { reject(err); }
       });
@@ -260,6 +284,85 @@ async function callVisionAPI(cfg: UpstreamConfig, images: ImageBlock[]): Promise
     req.write(body);
     req.end();
   });
+}
+
+// ── Cache-aware image description ──
+
+async function getImageDescriptions(
+  cfg: UpstreamConfig,
+  images: ImageBlock[],
+): Promise<{ descriptions: string[]; cacheHits: number; cacheMisses: number }> {
+  preloadCache();
+
+  const descriptions: string[] = [];
+  let cacheHits = 0;
+  let cacheMisses = 0;
+
+  for (const img of images) {
+    const hash = hashImage(img);
+    const cached = imageCache.get(hash);
+
+    if (cached) {
+      cacheHits++;
+      descriptions.push(cached);
+      cacheLog.info('cache hit', { hash: hash.slice(0, 12), descLen: cached.length });
+    } else {
+      cacheMisses++;
+      cacheLog.info('cache miss — calling Vision API', { hash: hash.slice(0, 12) });
+      try {
+        const desc = await describeImage(cfg, img);
+        descriptions.push(desc);
+        imageCache.set(hash, desc);
+        try {
+          insertImageCache(hash, desc);
+        } catch (err) {
+          cacheLog.warn('SQLite insert failed — cached in memory only', { hash: hash.slice(0, 12) });
+        }
+        cacheLog.info('Vision API success — cached', { hash: hash.slice(0, 12), descLen: desc.length });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        cacheLog.error('Vision API failed', err instanceof Error ? err : undefined, { hash: hash.slice(0, 12) });
+        descriptions.push(`[Image could not be described: ${msg}]`);
+      }
+    }
+  }
+
+  return { descriptions, cacheHits, cacheMisses };
+}
+
+// ── Request rewriting (per-image descriptions) ──
+
+function rewriteBodyPerImage(body: unknown, descriptions: string[]): unknown {
+  try {
+    let idx = 0;
+    return _replaceImagesPerImage(structuredClone(body) as JsonValue, () => {
+      const desc = descriptions[idx] || '[Image]';
+      idx++;
+      return desc;
+    });
+  } catch {
+    log.warn('structuredClone failed during rewrite — returning original');
+    return body;
+  }
+}
+
+function _replaceImagesPerImage(obj: JsonValue, nextDescription: () => string): JsonValue {
+  if (!obj || typeof obj !== 'object') return obj;
+
+  if (Array.isArray(obj)) {
+    return (obj as JsonArray).map(item => _replaceImagesPerImage(item, nextDescription));
+  }
+
+  const record = obj as JsonObject;
+  if (record.type === 'image' && record.source) {
+    return { type: 'text', text: `[Attached image: ${nextDescription()}]` } as unknown as JsonValue;
+  }
+
+  const result: JsonObject = {};
+  for (const [key, value] of Object.entries(record)) {
+    result[key] = _replaceImagesPerImage(value, nextDescription);
+  }
+  return result;
 }
 
 function getTlsOptions(): { rejectUnauthorized?: boolean } {
@@ -527,6 +630,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
       recordMetric({
         routing: 'direct', provider, model: effectiveModel, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: 0,
+        cacheHits: 0, cacheMisses: 0,
         ...(errMsg ? { error: errMsg } : {}),
       });
     });
@@ -545,6 +649,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
       recordMetric({
         routing: 'stripped', provider: 'deepseek', model, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+        cacheHits: 0, cacheMisses: 0,
         error: errMsg || 'No Anthropic API key',
       });
     });
@@ -552,12 +657,13 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
   }
 
   try {
-    const description = await callVisionAPI(cfg, images);
-    const rewritten = rewriteBody(parsed, description);
+    const { descriptions, cacheHits, cacheMisses } = await getImageDescriptions(cfg, images);
+    const rewritten = rewriteBodyPerImage(parsed, descriptions);
     forwardToUpstream(cfg.deepseekBaseUrl, cfg.deepseekApiKey, JSON.stringify(rewritten), req, res, (statusCode, ttfbMs, errMsg) => {
       recordMetric({
         routing: 'vision', provider: 'deepseek', model, statusCode,
         ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+        cacheHits, cacheMisses,
         ...(errMsg ? { error: errMsg } : {}),
       });
     });
@@ -571,6 +677,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
         recordMetric({
           routing: 'stripped', provider: 'deepseek', model, statusCode,
           ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+          cacheHits: 0, cacheMisses: 0,
           error: errMsg || message,
         });
       });
@@ -579,6 +686,7 @@ export async function handleProxyRequest(req: Request, res: Response): Promise<v
         recordMetric({
           routing: 'error', provider: 'deepseek', model, statusCode,
           ttfbMs, totalMs: Date.now() - startTime, bodySize, imageCount: images.length,
+          cacheHits: 0, cacheMisses: 0,
           error: errMsg || 'Failed to strip images',
         });
       });

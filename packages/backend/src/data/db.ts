@@ -53,6 +53,13 @@ export async function initDb(): Promise<void> {
       updated_at TEXT NOT NULL
     );
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS image_cache (
+      hash TEXT PRIMARY KEY,
+      description TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
 
   save();
   log.info('schema initialized');
@@ -148,6 +155,33 @@ export function saveTabStateRaw(json: string): void {
   d.run(
     'INSERT OR REPLACE INTO tab_state (id, data, updated_at) VALUES (?, ?, ?)',
     ['main', json, new Date().toISOString()]
+  );
+  save();
+}
+
+// ── Image Cache ──
+
+export function getAllImageCache(): Map<string, string> {
+  const cache = new Map<string, string>();
+  try {
+    const d = ensureDb();
+    const rows = d.exec('SELECT hash, description FROM image_cache');
+    if (rows.length > 0) {
+      for (const row of rows[0].values) {
+        cache.set(row[0] as string, row[1] as string);
+      }
+    }
+  } catch (err) {
+    log.error('Failed to load image cache', err instanceof Error ? err : undefined);
+  }
+  return cache;
+}
+
+export function insertImageCache(hash: string, description: string): void {
+  const d = ensureDb();
+  d.run(
+    'INSERT OR REPLACE INTO image_cache (hash, description, created_at) VALUES (?, ?, ?)',
+    [hash, description, Date.now()]
   );
   save();
 }
