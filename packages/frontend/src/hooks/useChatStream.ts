@@ -62,6 +62,7 @@ export function useChatStream({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [ptyApprovalPending, setPtyApprovalPending] = useState(false);
   const [thinkingBlocks, setThinkingBlocks] = useState<Map<string, ThinkingBlock>>(new Map());
   const [thinkingExpanded, setThinkingExpanded] = useState<Set<string>>(new Set());
   const [collapsedSegments, setCollapsedSegments] = useState<Set<string>>(new Set());
@@ -153,6 +154,7 @@ export function useChatStream({
       currentThinkingIdRef.current = null;
     }
     setIsStreaming(false);
+    setPtyApprovalPending(false);
     setTabStatus(chatId, 'idle');
     if (streamTimerRef.current) { clearTimeout(streamTimerRef.current); streamTimerRef.current = null; }
   }, [stopThinkingTimer, chatId, setTabStatus]);
@@ -647,8 +649,11 @@ export function useChatStream({
             }];
           });
         }
-        // If approval is detected, auto-flash or highlight in the UI
-        if (msg.approvalDetected || msg.questionDetected) {
+        // If approval is detected, set PTY pending state for PermissionBar
+        if (msg.approvalDetected) {
+          setPtyApprovalPending(true);
+        }
+        if (msg.questionDetected) {
           setTabStatus(chatId, 'streaming');
         }
       }
@@ -952,6 +957,7 @@ export function useChatStream({
     thinkingExpanded,
     collapsedSegments,
     isStreaming,
+    ptyApprovalPending,
     input,
     // Setters
     setInput,
@@ -975,5 +981,7 @@ export function useChatStream({
     // AskUserQuestion handling
     answerQuestion,
     pendingQuestionRef,
+    // PTY permission handling
+    clearPtyApproval: () => setPtyApprovalPending(false),
   };
 }

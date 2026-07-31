@@ -11,6 +11,7 @@ const log = createLogger('session-registry');
 export interface SessionEntry {
   chatId: string;
   session: ActiveSession;
+  permissionMode: string;
   eventBuffer: AppEvent[];
   maxEvents: number;
   listeners: Set<WebSocket>;
@@ -50,7 +51,7 @@ export class SessionRegistry {
   /** Test helper: inject a pre-built session entry */
   createEntry(chatId: string, session: ActiveSession, cliArgs: string[]): SessionEntry {
     const entry: SessionEntry = {
-      chatId, session, eventBuffer: [], maxEvents: DEFAULT_MAX_EVENTS,
+      chatId, session, permissionMode: 'bypassPermissions', eventBuffer: [], maxEvents: DEFAULT_MAX_EVENTS,
       listeners: new Set(), done: false, cleanupTimer: null, cliArgs,
     };
     this.sessions.set(chatId, entry);
@@ -62,8 +63,18 @@ export class SessionRegistry {
   createOrResume(chatId: string, opts: CreateOptions): SessionEntry {
     const existing = this.sessions.get(chatId);
     if (existing && !existing.done) {
-      log.info('session already active — reusing', { chatId: chatId.slice(0, 8) });
-      return existing;
+      if (existing.permissionMode === opts.permissionMode) {
+        log.info('session already active — reusing', { chatId: chatId.slice(0, 8) });
+        return existing;
+      }
+      // Permission mode changed — abort old session and start a new one
+      log.info('permission mode changed — restarting session', {
+        chatId: chatId.slice(0, 8),
+        oldMode: existing.permissionMode,
+        newMode: opts.permissionMode,
+      });
+      try { existing.session.abort(); } catch {}
+      this.sessions.delete(chatId);
     }
     if (existing?.cleanupTimer) { clearTimeout(existing.cleanupTimer); }
 
@@ -74,11 +85,18 @@ export class SessionRegistry {
       env: opts.env,
       onRawLine: opts.onRawLine,
       onSessionReady: opts.onSessionReady,
-      onExit: (code) => { this.markDone(chatId); opts.onExit(code); },
+      onExit: (code) => {
+        // Only mark done if this session hasn't been replaced (e.g. by a permission mode change)
+        const current = this.sessions.get(chatId);
+        if (current && current.session === session) {
+          this.markDone(chatId);
+        }
+        opts.onExit(code);
+      },
     });
 
     const entry: SessionEntry = {
-      chatId, session, eventBuffer: [], maxEvents: DEFAULT_MAX_EVENTS,
+      chatId, session, permissionMode: opts.permissionMode, eventBuffer: [], maxEvents: DEFAULT_MAX_EVENTS,
       listeners: new Set(), done: false, cleanupTimer: null, cliArgs: opts.cliArgs,
     };
     this.sessions.set(chatId, entry);

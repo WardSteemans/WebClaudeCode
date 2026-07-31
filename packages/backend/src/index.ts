@@ -15,6 +15,8 @@ import { registerTabStateRoutes } from './routes/tab-state.js';
 import { registerChatsRoutes } from './routes/chats.js';
 import { registerLogRoutes } from './routes/log.js';
 import { registerStreamLogRoutes } from './routes/stream-log.js';
+import { getOkfStatus } from './services/okf/status.js';
+import { startOkfWatcher } from './services/okf/watcher.js';
 
 const log = createLogger('server');
 
@@ -74,6 +76,11 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', activeSessions: sessions.size });
 });
 
+// ── OKF Compiled Memory status ──
+app.get('/api/okf/status', (_req, res) => {
+  res.json(getOkfStatus());
+});
+
 // ----- Start -----
 
 initDb().then(() => initPricing()).then(() => {
@@ -81,5 +88,9 @@ initDb().then(() => initPricing()).then(() => {
     log.info(`Backend running`, { port: PORT, wsPath: '/ws' });
     console.log(`Backend running on http://localhost:${PORT}`);
     console.log(`WebSocket on ws://localhost:${PORT}/ws`);
+
+    // Start OKF Compiled Memory file watcher
+    startOkfWatcher();
+    log.info('OKF watcher started for codebase knowledge graph');
   });
 });

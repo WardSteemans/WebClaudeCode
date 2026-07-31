@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, X, FolderOpen, Code2, Sun, Moon, Files, MessageSquare, LayoutPanelLeft, GitBranch, Cloud, Settings as SettingsIcon, BarChart3, Puzzle, FileDiff } from 'lucide-react';
+import { Plus, X, FolderOpen, Code2, Sun, Moon, Files, MessageSquare, LayoutPanelLeft, GitBranch, Cloud, Settings as SettingsIcon, BarChart3, Puzzle, FileDiff, Database } from 'lucide-react';
 import { useTheme } from './ThemeContext';
 import { useResizable } from './hooks/useResizable';
 import { useTabStore } from './store';
@@ -21,6 +21,7 @@ import { Notifications } from './components/ui/Notifications';
 import { SubagentPanel } from './components/panels/SubagentPanel';
 import { CapabilitiesPanel } from './components/panels/CapabilitiesPanel';
 import { ChatDiffsPanel } from './components/panels/ChatDiffsPanel';
+import { OkfMonitorPanel } from './components/panels/OkfMonitorPanel';
 import { StatusBar } from './components/ui/StatusBar';
 import { ProxyMetricsPanel } from './components/ProxyMetricsPanel';
 import { FolderPicker } from './components/files/FolderPicker';
@@ -31,10 +32,11 @@ export default function App() {
   const addTab = useTabStore((s) => s.addTab);
   const removeTab = useTabStore((s) => s.removeTab);
   const setActiveTab = useTabStore((s) => s.setActiveTab);
+  const setActiveChat = useTabStore((s) => s.setActiveChat);
   const { theme, toggle: toggleTheme } = useTheme();
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [leftPanel, setLeftPanel] = useState<'explorer' | 'git' | 'azure' | 'overview' | 'capabilities' | 'changes'>('explorer');
+  const [leftPanel, setLeftPanel] = useState<'explorer' | 'git' | 'azure' | 'overview' | 'capabilities' | 'changes' | 'okf'>('explorer');
   const [showSettings, setShowSettings] = useState(false);
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const showActivityPanel = useSettingsStore(s => s.showActivity);
@@ -45,51 +47,35 @@ export default function App() {
   });
   const taskCount = useEventBus(s => s.taskEntries.length);
 
-  // ── URL routing: sync store ↔ URL ──
+  // ── URL routing: URL is the source of truth, store follows ──
   const { tabId: urlTabId, chatId: urlChatId } = useParams();
   const navigate = useNavigate();
+  const hydratedRef = useRef(false);
 
-  // On mount: restore tab/chat from URL
-  const urlRestoredRef = useRef(false);
   useEffect(() => {
-    if (urlRestoredRef.current) return;
-    if (tabs.length === 0) return;
-    urlRestoredRef.current = true;
-    console.log(`[App] URL RESTORE: url=[${location.pathname}] tabs=${tabs.length} activeTabId=[${activeTabId?.slice(0,8)}]`);
-    if (urlTabId) {
-      const tab = tabs.find(t => t.id === urlTabId);
-      if (tab) {
-        if (activeTabId !== urlTabId) {
-          useTabStore.getState().setActiveTab(urlTabId);
-        }
-        if (urlChatId && tab.chats.some(c => c.id === urlChatId)) {
-          useTabStore.getState().setActiveChat(urlTabId, urlChatId);
-        }
-      } else {
-        // Tab not found in URL — redirect to first tab
+    if (tabs.length === 0) return; // wait for zustand hydration
+
+    if (!hydratedRef.current) {
+      hydratedRef.current = true;
+      // First load: validate URL against available tabs, redirect if mismatch
+      if (urlTabId && !tabs.some(t => t.id === urlTabId)) {
         navigate(`/${tabs[0].id}`, { replace: true });
+        return;
       }
-    } else {
-      // No URL params — redirect to first tab
-      const firstTab = tabs[0];
-      const chatId = firstTab.activeChatId;
-      navigate(chatId ? `/${firstTab.id}/${chatId}` : `/${firstTab.id}`, { replace: true });
+      if (!urlTabId) {
+        const first = tabs[0];
+        navigate(first.activeChatId ? `/${first.id}/${first.activeChatId}` : `/${first.id}`, { replace: true });
+        return;
+      }
+    }
+
+    // URL → store (runs on every URL change after hydration)
+    if (urlTabId && activeTabId !== urlTabId) setActiveTab(urlTabId);
+    if (urlTabId && urlChatId && activeChatId !== urlChatId) {
+      const tab = tabs.find(t => t.id === urlTabId);
+      if (tab?.chats.some(c => c.id === urlChatId)) setActiveChat(urlTabId, urlChatId);
     }
   }, [urlTabId, urlChatId, tabs.length]);
-
-  // Keep URL in sync with store state
-  useEffect(() => {
-    if (activeTabId) {
-      const path = activeChatId ? `/${activeTabId}/${activeChatId}` : `/${activeTabId}`;
-      if (location.pathname !== path) {
-        console.log(`[App] URL SYNC: store → navigate [${location.pathname}] → [${path}]`);
-        navigate(path, { replace: true });
-      }
-    } else if (tabs.length === 0 && location.pathname !== '/') {
-      console.log(`[App] URL SYNC: no tabs → navigate to /`);
-      navigate('/', { replace: true });
-    }
-  }, [activeTabId, activeChatId, tabs.length]);
 
   // Load settings from SQLite on startup
   useEffect(() => {
@@ -122,7 +108,7 @@ export default function App() {
     }
   };
 
-  const leftPanelTitle = leftPanel === 'git' ? 'Source Control' : leftPanel === 'azure' ? 'Azure DevOps' : leftPanel === 'overview' ? 'Overview' : leftPanel === 'capabilities' ? 'Capabilities' : leftPanel === 'changes' ? 'Changes' : 'Explorer';
+  const leftPanelTitle = leftPanel === 'git' ? 'Source Control' : leftPanel === 'azure' ? 'Azure DevOps' : leftPanel === 'overview' ? 'Overview' : leftPanel === 'capabilities' ? 'Capabilities' : leftPanel === 'changes' ? 'Changes' : leftPanel === 'okf' ? 'Compiled Memory' : 'Explorer';
 
   return (
     <div className="h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-text)] transition-colors">
@@ -137,7 +123,7 @@ export default function App() {
           {tabs.map((tab) => (
             <div
               key={tab.id}
-              onClick={() => { setActiveTab(tab.id); setSelectedFile(null); }}
+              onClick={() => { navigate(`/${tab.id}`); setSelectedFile(null); }}
               className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-md cursor-pointer text-[13px] whitespace-nowrap transition-all duration-150 ${
                 tab.id === activeTabId
                   ? 'bg-[var(--color-surface-hover)] text-[var(--color-text)] shadow-sm ring-1 ring-[var(--color-border)]'
@@ -147,7 +133,15 @@ export default function App() {
               <FolderOpen size={13} className="shrink-0 opacity-60" />
               <span className="truncate max-w-36">{tab.label}</span>
               <button
-                onClick={(e) => { e.stopPropagation(); removeTab(tab.id); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const isActive = tab.id === activeTabId;
+                  removeTab(tab.id);
+                  if (isActive) {
+                    const nextId = useTabStore.getState().activeTabId;
+                    navigate(nextId ? `/${nextId}` : '/', { replace: true });
+                  }
+                }}
                 className="text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-500/10 rounded-sm p-0.5 opacity-0 group-hover:opacity-100 transition-all"
               >
                 <X size={12} />
@@ -191,6 +185,9 @@ export default function App() {
             <button onClick={() => { if (leftPanel === 'changes' && !explorer.collapsed) { explorer.toggle(); setLeftPanel('explorer'); } else { if (explorer.collapsed) explorer.toggle(); setLeftPanel('changes'); } }} className={`p-1.5 rounded-md transition-colors ${leftPanel === 'changes' && !explorer.collapsed ? 'text-accent-500 bg-accent-500/10' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'}`} title="Changes">
               <FileDiff size={20} />
             </button>
+            <button onClick={() => { if (leftPanel === 'okf' && !explorer.collapsed) { explorer.toggle(); setLeftPanel('explorer'); } else { if (explorer.collapsed) explorer.toggle(); setLeftPanel('okf'); } }} className={`p-1.5 rounded-md transition-colors ${leftPanel === 'okf' && !explorer.collapsed ? 'text-accent-500 bg-accent-500/10' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'}`} title="Compiled Memory">
+              <Database size={20} />
+            </button>
             <button onClick={() => setShowSettings(true)} className="mt-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors" title="Settings">
               <SettingsIcon size={20} />
             </button>
@@ -207,6 +204,7 @@ export default function App() {
             {!explorer.collapsed && leftPanel === 'overview' && <ErrorBoundary name="Session overview"><SessionOverview sessionId={activeTab?.chats.find(c => c.id === activeTab.activeChatId)?.sessionId ?? null} /></ErrorBoundary>}
             {!explorer.collapsed && leftPanel === 'capabilities' && <ErrorBoundary name="Capabilities"><CapabilitiesPanel /></ErrorBoundary>}
             {!explorer.collapsed && leftPanel === 'changes' && <ErrorBoundary name="Changes panel"><ChatDiffsPanel chatId={activeTab?.activeChatId ?? ''} /></ErrorBoundary>}
+            {!explorer.collapsed && leftPanel === 'okf' && <ErrorBoundary name="OKF Monitor"><OkfMonitorPanel /></ErrorBoundary>}
           </div>
 
           {!explorer.collapsed && <div onMouseDown={explorer.onMouseDown} className="w-1 cursor-col-resize hover:bg-accent-500/50 transition-colors shrink-0 bg-[var(--color-border)]" />}

@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   MessageSquare, X, Pin, Archive, FolderIcon, FolderOpen,
   ChevronRight, ChevronDown, Plus,
@@ -27,10 +28,10 @@ export function ChatList({ tabId, workDir }: ChatListProps) {
     useShallow((s) => s.tabs.find((t) => t.id === tabId) ?? null)
   );
   const removeChat = useTabStore((s) => s.removeChat);
-  const setActiveChat = useTabStore((s) => s.setActiveChat);
   const updateChatTitle = useTabStore((s) => s.updateChatTitle);
   const addChat = useTabStore((s) => s.addChat);
   const updateChatSessionId = useTabStore((s) => s.updateChatSessionId);
+  const navigate = useNavigate();
 
   // New actions
   const addFolder = useTabStore((s) => s.addFolder);
@@ -299,7 +300,7 @@ export function ChatList({ tabId, workDir }: ChatListProps) {
   const renderChatItem = (chat: Chat, level: number = 0) => (
     <div key={chat.id}>
       <div
-        onClick={() => { console.log(`[ChatList] CLICK: chat=[${chat.id.slice(0,8)}] "${chat.title}" (was active=[${tab.activeChatId?.slice(0,8)}])`); setActiveChat(tabId, chat.id); }}
+        onClick={() => navigate(`/${tabId}/${chat.id}`)}
         onContextMenu={(e) => handleContextMenu(e, chat.id)}
         className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer text-[13px] transition-colors ${
           chat.id === tab.activeChatId
@@ -470,7 +471,7 @@ export function ChatList({ tabId, workDir }: ChatListProps) {
               <div
                 onClick={() => {
                   unarchiveChat(tabId, c.id);
-                  setActiveChat(tabId, c.id);
+                  navigate(`/${tabId}/${c.id}`);
                 }}
                 onContextMenu={(e) => handleContextMenu(e, c.id)}
                 className="group flex items-center gap-2 px-3 py-1.5 cursor-pointer text-[13px] transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] border-l-2 border-transparent"
